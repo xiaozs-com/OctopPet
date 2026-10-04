@@ -1,0 +1,221 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "state": "idle",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "65d0c2252ae7a024c00956f35f18f296027221f5ed3ea83ec5bf400ca6d1dc7d"
+        },
+        {
+          "durationMs": 250,
+          "hash": "520d531f292b0176a65222734dcd7041b4d212870f08aa01330af5cea8cbede1"
+        },
+        {
+          "durationMs": 250,
+          "hash": "78ea4747db83772b265bb3dcd0932eed19d4887b2db757d91d66a7f6359fe300"
+        },
+        {
+          "durationMs": 250,
+          "hash": "de61417f12f713b8fa56eb41f2aab0f15edea0c49940e8a8e07630a408e21254"
+        }
+      ]
+    },
+    {
+      "state": "waving",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "0e327233918633cb0a13a34238752a89f343b618c1adc735339624d0a719b96b"
+        },
+        {
+          "durationMs": 250,
+          "hash": "9d9d2cf8ad89f8fbefeab26b9b0ab75f5aa8734be81fe69ec012a1b093efe33a"
+        },
+        {
+          "durationMs": 250,
+          "hash": "eea30b233ad96a58ba86a30178acae494a865f496ea4858654afccb836cca2ca"
+        },
+        {
+          "durationMs": 250,
+          "hash": "881236c2ff39a8aed5102f91241ed0fdcd38a9dce402cff0c025923c25717e87"
+        }
+      ]
+    },
+    {
+      "state": "listening",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "89df792063a7b504fd3b7d92e2ab6f407dedb6978aaeae941cd4fd4b1fa42f90"
+        },
+        {
+          "durationMs": 250,
+          "hash": "6c9e4c708720518a058b7c6ee11c540232c27a9cbe4355d5ac047b52a0e2891a"
+        },
+        {
+          "durationMs": 250,
+          "hash": "ab5c29d6c52636b3a660a1e9a69606302a2bece875a38ed9f21ac9d257037d46"
+        },
+        {
+          "durationMs": 250,
+          "hash": "3a07a72c600cbb0a351fb7b9992e0e957ece4d39f1bb4b0e925d81874f3808e8"
+        }
+      ]
+    },
+    {
+      "state": "thinking",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "61f6e8bc845d3d256f67dd4227d79fb6767416da4b827c872f2f3342b74b3820"
+        },
+        {
+          "durationMs": 250,
+          "hash": "d8a6e604f7c7db846e2d4a782003f641836aa4a53b936fc537ca656b84ee47fe"
+        },
+        {
+          "durationMs": 250,
+          "hash": "ea2011008c6aaafa27aa1659c3f5f90cb87d11060e32f47f7336e5fcfb9fd753"
+        },
+        {
+          "durationMs": 250,
+          "hash": "a7c33dced351fe99581d35b961ad8eeb8cc88f1a9a95dc76ccf34f96c286e575"
+        }
+      ]
+    },
+    {
+      "state": "working",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "1d7a6752ebf78500b0ceee2a980d5ebf21ee15ec498129a7b5ec5fe291360302"
+        },
+        {
+          "durationMs": 250,
+          "hash": "3ff69f866e5f12b09614c23c46053da98b22409df68b400c6f7b7c2f6e91321f"
+        },
+        {
+          "durationMs": 250,
+          "hash": "42f4505a1305c8a45037f6599dc7cfcf2e095f2d48bbeb00e02221b6e3968f5d"
+        },
+        {
+          "durationMs": 250,
+          "hash": "5cda2332fb65f93c67e02a9b0167b03949fc1bdcaf7dd817deea3bdc8e16ee8e"
+        }
+      ]
+    },
+    {
+      "state": "waiting",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "81e74aa6ad84a4f1b058cc41209079d7fb78b05273ff0b37ea359e14bcd40467"
+        },
+        {
+          "durationMs": 250,
+          "hash": "fd6802d21ee21893a8deb05f2b0956de4ea5ee5c4817bb99002472a7c555a653"
+        },
+        {
+          "durationMs": 250,
+          "hash": "3f1a712ce4b6ab4309d2c7c496596686e94457f75982cb25f8f913a7bbdf1bd1"
+        },
+        {
+          "durationMs": 250,
+          "hash": "88896c014dea31a648539a0c7e3d633731d1d70e45aa16022412b8945b6d0971"
+        }
+      ]
+    },
+    {
+      "state": "success",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "68b1a501461898ccae675191f39b47b0668ddbeb25fecc99a731ba15e80a03b9"
+        },
+        {
+          "durationMs": 250,
+          "hash": "e2b807cb5abba605c20428b5b5afcf4c9771871996eb0d41aa2d7d898c5df038"
+        },
+        {
+          "durationMs": 250,
+          "hash": "4311f9e02660339e61e7e8a7165967f2221f00adc57a75b3fb161ae940a752e8"
+        },
+        {
+          "durationMs": 250,
+          "hash": "af06339b4cba85b9e3133e46e5aa3fa763eea9bb64f1c91dc7ed8ac7f22dedad"
+        }
+      ]
+    },
+    {
+      "state": "error",
+      "width": 222,
+      "height": 222,
+      "alpha": true,
+      "loop": 0,
+      "frameCount": 4,
+      "distinctFrames": 4,
+      "frames": [
+        {
+          "durationMs": 250,
+          "hash": "ab4afe8b03bdeacfe50c22d289f9e330fe3b5cb0b891fa6ca96a3c39145f6ad2"
+        },
+        {
+          "durationMs": 250,
+          "hash": "c6cbf10ceb76cff475ddeb35701562b9126830fd3cc4a866340d0b8bbe3747eb"
+        },
+        {
+          "durationMs": 250,
+          "hash": "6985c5099f1fdffb09624dd2cfd0cbfabb22a23d319054de014badc7b99f0b8a"
+        },
+        {
+          "durationMs": 250,
+          "hash": "669932a1c5a65c8d34223ff776217299241f826ae1d097e7a6afe339a40a37d0"
+        }
+      ]
+    }
+  ]
+}

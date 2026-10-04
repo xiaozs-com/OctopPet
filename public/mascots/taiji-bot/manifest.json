@@ -1,0 +1,70 @@
+{
+  "id": "taiji-bot",
+  "name": "太极机器人",
+  "version": 1,
+  "style": "half-body",
+  "hero": "hero.png",
+  "spritesheet": {
+    "file": "spritesheet.png",
+    "width": 888,
+    "height": 1776,
+    "columns": 4,
+    "rows": 8
+  },
+  "sourceSpritesheet": "spritesheet-source.png",
+  "frameSize": { "width": 222, "height": 222 },
+  "framesPerAnimation": 4,
+  "fps": 4,
+  "durationMs": 1000,
+  "loop": true,
+  "states": {
+    "idle": {
+      "label": "空闲",
+      "row": 0,
+      "image": "idle.png",
+      "animation": "idle.webp"
+    },
+    "waving": {
+      "label": "挥手",
+      "row": 1,
+      "image": "waving.png",
+      "animation": "waving.webp"
+    },
+    "listening": {
+      "label": "倾听",
+      "row": 2,
+      "image": "listening.png",
+      "animation": "listening.webp"
+    },
+    "thinking": {
+      "label": "思考",
+      "row": 3,
+      "image": "thinking.png",
+      "animation": "thinking.webp"
+    },
+    "working": {
+      "label": "执行",
+      "row": 4,
+      "image": "working.png",
+      "animation": "working.webp"
+    },
+    "waiting": {
+      "label": "等待",
+      "row": 5,
+      "image": "waiting.png",
+      "animation": "waiting.webp"
+    },
+    "success": {
+      "label": "完成",
+      "row": 6,
+      "image": "success.png",
+      "animation": "success.webp"
+    },
+    "error": {
+      "label": "失败",
+      "row": 7,
+      "image": "error.png",
+      "animation": "error.webp"
+    }
+  }
+}

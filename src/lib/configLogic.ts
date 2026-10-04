@@ -17,6 +17,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
 export const MASCOT_SRC: Record<MascotId, string> = {
   peek: "/mascots/peek.webp",
   type: "/mascots/type.webp",
+  "taiji-bot": "/mascots/taiji-bot/idle.webp",
 };
 
 export function normalizeBaseUrl(raw: string): string {

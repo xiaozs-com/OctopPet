@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
+- Optional MascotImage animationState prop for future task-state integration, plus an offline animation preview and asset manifest.
+
 ## [0.2.0] - 2026-09-03
 
 ### Fixed

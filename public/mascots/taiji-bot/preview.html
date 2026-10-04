@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>太极机器人 · OctopPet 动画预览</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+      font:
+        16px/1.6 system-ui,
+        sans-serif;
+      background: #f3f7f8;
+      color: #163c42;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 8px;
+    }
+    .controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 20px 0;
+    }
+    button,
+    select {
+      padding: 8px 12px;
+      border: 1px solid #aac8ca;
+      border-radius: 8px;
+      background: white;
+      color: inherit;
+    }
+    main {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    article {
+      border: 1px solid #c4d4d6;
+      border-radius: 16px;
+      overflow: hidden;
+      background: white;
+    }
+    .stage {
+      height: 260px;
+      display: grid;
+      place-items: center;
+      background-color: var(--stage, #fff);
+    }
+    .stage img {
+      width: var(--size, 160px);
+      height: var(--size, 160px);
+      object-fit: contain;
+    }
+    h2 {
+      font-size: 16px;
+      margin: 12px 16px;
+    }
+    #status {
+      font-size: 13px;
+    }
+  </style>
+  <h1>太极机器人 · 半身桌面宠物</h1>
+  <p>8 种状态，每种 4 帧；循环 WebP，默认显示尺寸 160 像素。</p>
+  <div class="controls">
+    <label
+      >尺寸
+      <select id="size">
+        <option>80</option>
+        <option>128</option>
+        <option selected>160</option>
+        <option>224</option>
+      </select>
+      px</label
+    >
+    <label
+      >背景
+      <select id="background">
+        <option value="#ffffff">浅色</option>
+        <option value="#15272e">深色</option>
+        <option value="#b7cfca">青灰</option>
+      </select></label
+    >
+    <button id="toggle">显示静态帧</button>
+    <span id="status">正在加载…</span>
+  </div>
+  <main></main>
+  <script>
+    const states = [
+      ["idle", "空闲"],
+      ["waving", "挥手"],
+      ["listening", "倾听"],
+      ["thinking", "思考"],
+      ["working", "执行"],
+      ["waiting", "等待"],
+      ["success", "完成"],
+      ["error", "失败"],
+    ];
+    let animate = true,
+      loaded = 0;
+    const main = document.querySelector("main");
+    for (const [id, label] of states) {
+      const card = document.createElement("article");
+      const stage = document.createElement("div");
+      stage.className = "stage";
+      const img = document.createElement("img");
+      img.alt = label;
+      img.dataset.state = id;
+      img.onload = () => {
+        document.querySelector("#status").textContent = `已加载 ${++loaded}/8`;
+      };
+      img.onerror = () => {
+        document.querySelector("#status").textContent = `加载失败：${img.src}`;
+      };
+      img.src = `${id}.webp`;
+      stage.append(img);
+      const title = document.createElement("h2");
+      title.textContent = `${label} · ${id}`;
+      card.append(stage, title);
+      main.append(card);
+    }
+    document.querySelector("#size").onchange = (e) =>
+      document.body.style.setProperty("--size", `${e.target.value}px`);
+    document.querySelector("#background").onchange = (e) =>
+      document.body.style.setProperty("--stage", e.target.value);
+    document.querySelector("#toggle").onclick = (e) => {
+      animate = !animate;
+      loaded = 0;
+      e.target.textContent = animate ? "显示静态帧" : "播放动画";
+      for (const img of document.querySelectorAll(".stage img"))
+        img.src = `${img.dataset.state}.${animate ? "webp" : "png"}`;
+    };
+  </script>
+</html>

@@ -60,6 +60,9 @@ fn tray_mascot_selection_updates_only_supported_mascots() {
     select_mascot(&mut cfg, "type").unwrap();
     assert_eq!(cfg.mascot_id, "type");
 
+    select_mascot(&mut cfg, "taiji-bot").unwrap();
+    assert_eq!(cfg.mascot_id, "taiji-bot");
+
     select_mascot(&mut cfg, "peek").unwrap();
     assert_eq!(cfg.mascot_id, "peek");
 

@@ -25,6 +25,7 @@ const SETTINGS_WIDTH = 480;
 const MASCOT_OPTIONS: Array<{ id: MascotId; label: string }> = [
   { id: "peek", label: "Peek" },
   { id: "type", label: "Type" },
+  { id: "taiji-bot", label: "太极机器人" },
 ];
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [

@@ -44,7 +44,7 @@ impl Default for AppConfig {
 
 pub fn select_mascot(cfg: &mut AppConfig, mascot_id: &str) -> Result<(), String> {
     match mascot_id {
-        "peek" | "type" => {
+        "peek" | "type" | "taiji-bot" => {
             cfg.mascot_id = mascot_id.to_string();
             Ok(())
         }
