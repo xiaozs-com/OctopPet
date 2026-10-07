@@ -8,6 +8,11 @@ import {
 
 import type { ComposerSendOptions } from "../components/Composer";
 import {
+  createPdChatBridge,
+  PD_CHAT_PROTOCOL,
+  supportsPdChatBridge,
+} from "../lib/pdChatBridge";
+import {
   applyStreamChunk,
   buildCancelPayload,
   buildChatWsUrl,
@@ -500,6 +505,7 @@ export function useChatController() {
         buildChatWsUrl(config.baseUrl, currentAgentId, tokenRef.current),
       );
       socketRef.current = socket;
+      const handlePdRequest = createPdChatBridge(socket, thread.id, setError);
       let assistantText = "";
       let status = beginStreamStatus();
 
@@ -532,22 +538,25 @@ export function useChatController() {
       };
 
       socket.onopen = () => {
-        socket.send(
-          JSON.stringify(
-            buildUserTurnPayload({
-              text,
-              threadId: thread.id,
-              sessionKey: thread.sessionKey,
-              attachments: turnOptions.attachments,
-              model: turnOptions.model,
-              mcpServers: turnOptions.mcpServers,
-            }),
-          ),
-        );
+        const payload = buildUserTurnPayload({
+          text,
+          threadId: thread.id,
+          sessionKey: thread.sessionKey,
+          attachments: turnOptions.attachments,
+          model: turnOptions.model,
+          mcpServers: turnOptions.mcpServers,
+        });
+        if (supportsPdChatBridge(socket.url))
+          payload.pd_bridge = {
+            protocol: PD_CHAT_PROTOCOL,
+            operations: ["helper.cli"],
+          };
+        socket.send(JSON.stringify(payload));
       };
       socket.onmessage = (event) => {
         try {
           const chunk = JSON.parse(event.data);
+          if (handlePdRequest(chunk)) return;
           status = applyStreamStatusEvent(status, chunk);
           setStreamStatus(status);
           const result = applyStreamChunk(assistantText, chunk);

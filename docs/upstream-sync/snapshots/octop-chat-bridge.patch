@@ -1,0 +1,49 @@
+--- a/src/octop/api/routers/chat/ws.py
++++ b/src/octop/api/routers/chat/ws.py
+@@ -24,6 +24,11 @@
+ from octop.infra.bridge.ids import parse_bridge_agent_id
+ from octop.infra.errors import OctopError
+ from octop.infra.gateway.ws import WS_CHANNEL_ID
++# PD_CHAT_BRIDGE_PATCH: independently installed adapter; ordinary chat still works without it.
++try:
++    from pd_chat_bridge import broker as pd_chat_broker
++except ImportError:
++    pd_chat_broker = None
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -94,6 +99,10 @@
+                 continue
+ 
+             msg_type = str(payload.get("type") or "user_turn")
++            if msg_type == "pd_cli_result":
++                if pd_chat_broker is not None:
++                    pd_chat_broker.complete(connection_id, payload)
++                continue
+             if msg_type == "ping":
+                 await send_frame({"type": "pong"})
+                 continue
+@@ -162,6 +171,14 @@
+                 await send_frame({"type": "done"})
+                 continue
+ 
++            if pd_chat_broker is not None and payload.get("pd_bridge") == {
++                "protocol": "pd-chat-cli@2", "operations": ["helper.cli"]
++            }:
++                registry = server.app_runtime.agent_registry
++                row = registry.get_row(agent_id)
++                if row is not None and row.user_id == user.id:
++                    pd_chat_broker.bind(user.id, agent_id, prepared.thread_id,
++                        connection_id, send_frame, registry.resolve_workspace_dir(agent_id))
+             inbound = build_dashboard_inbound(
+                 agent_id=agent_id,
+                 user_id=user.id,
+@@ -183,6 +200,8 @@
+     finally:
+         # Disconnect must not cancel an in-flight turn — clients may reconnect and
+         # subscribe to continue receiving subsequent chunks (weak stream resume).
++        if pd_chat_broker is not None:
++            pd_chat_broker.disconnect(connection_id)
+         hub.unregister(connection_id)
+         if websocket.application_state == WebSocketState.CONNECTED:
+             with contextlib.suppress(Exception):

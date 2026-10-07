@@ -4,6 +4,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { AppConfig, MascotId } from "./types";
 
 export const tauriApi = {
+  pdExecuteCli: (args: string[]) => invoke<unknown>("pd_execute_cli", { args }),
   loadConfig: () => invoke<AppConfig>("load_config"),
   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
   patchConfig: (patch: Partial<AppConfig>) =>

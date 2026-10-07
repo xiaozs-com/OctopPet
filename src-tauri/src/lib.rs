@@ -1,4 +1,5 @@
 pub mod config_cmd;
+pub mod pd_bridge_cmd;
 pub mod secrets_cmd;
 pub mod tray;
 pub mod window_cmd;
@@ -42,6 +43,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            pd_bridge_cmd::pd_execute_cli,
             config_cmd::load_config,
             config_cmd::save_config,
             config_cmd::patch_config,

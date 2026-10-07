@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Taiji default idle: fixed body with an eye-only blink every five seconds; removed body movement from the default rendering.
+
+- PD bridge: browser CLI commands now pass through all bridge layers; proxy failures report their cause instead of a generic unavailable message.
+
+### Changed
+
+- Removed the PD bridge authorization dialog for all supported helper CLI operations, including window activation. Helper failures remain visible in chat.
+
+- Restored the original Octop AI chat entry and settings; removed the separate local Helper dialogue and direct CLI integration. PD integration will be provided through an independent component and Skill.
+
 ### Added
+
+- Experimental on-demand PD CLI proxy over the existing Octop chat WebSocket. The existing screen-automation Skill calls the local helper without an extra bridge authorization dialog; ordinary chat does not invoke the helper. Includes PNG capture transport. Reuses existing WS or WSS without port changes; requires the independent server adapter and a private Agent; remote deployment is pending.
 
 - Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
 - Optional MascotImage animationState prop for future task-state integration, plus an offline animation preview and asset manifest.

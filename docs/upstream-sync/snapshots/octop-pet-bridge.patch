@@ -1,0 +1,734 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 57e06326841cbda54ed319384bb75b30eded0606..d715c378e95aadf78d1dff3c9e7e1cf619b929c4 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ## [Unreleased]
+ 
++### Fixed
++
++- PD bridge: browser CLI commands now pass through all bridge layers; proxy failures report their cause instead of a generic unavailable message.
++
++### Changed
++
++- Removed the PD bridge authorization dialog for all supported helper CLI operations, including window activation. Helper failures remain visible in chat.
++
++- Restored the original Octop AI chat entry and settings; removed the separate local Helper dialogue and direct CLI integration. PD integration will be provided through an independent component and Skill.
++
+ ### Added
+ 
++- Experimental on-demand PD CLI proxy over the existing Octop chat WebSocket. The existing screen-automation Skill calls the local helper without an extra bridge authorization dialog; ordinary chat does not invoke the helper. Includes PNG capture transport. Reuses existing WS or WSS without port changes; requires the independent server adapter and a private Agent; remote deployment is pending.
++
+ - Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
+ - Optional MascotImage animationState prop for future task-state integration, plus an offline animation preview and asset manifest.
+ 
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 4fb4c5cbaa8f36b0aff345bbd7810a4e3edaebfb..a52c03d4ca8a77aa5da0b446c169238b46f51fce 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,4 +1,5 @@
+ pub mod config_cmd;
++pub mod pd_bridge_cmd;
+ pub mod secrets_cmd;
+ pub mod tray;
+ pub mod window_cmd;
+@@ -42,6 +43,7 @@ pub fn run() {
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
++            pd_bridge_cmd::pd_execute_cli,
+             config_cmd::load_config,
+             config_cmd::save_config,
+             config_cmd::patch_config,
+diff --git a/src-tauri/src/pd_bridge_cmd.rs b/src-tauri/src/pd_bridge_cmd.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1c6bad441c12d0583c4985c44dff97959062faac
+--- /dev/null
++++ b/src-tauri/src/pd_bridge_cmd.rs
+@@ -0,0 +1,180 @@
++//! Thin adapter to the independently installed, read-only PD component.
++use serde_json::Value;
++use std::{
++    io::Read,
++    path::PathBuf,
++    process::{Command, Stdio},
++    time::{Duration, Instant},
++};
++
++fn component_entry() -> Result<PathBuf, String> {
++    #[cfg(debug_assertions)]
++    if let Some(path) = std::env::var_os("PD_BRIDGE_COMPONENT_EXE") {
++        let path = PathBuf::from(path);
++        if path.is_absolute() && path.is_file() {
++            return Ok(path);
++        }
++        return Err("开发组件路径无效".into());
++    }
++    let root = std::env::var_os("SCREEN_AUTOMATION_HOME")
++        .map(PathBuf::from)
++        .or_else(|| {
++            std::env::var_os("USERPROFILE")
++                .map(|p| PathBuf::from(p).join("Xiaozs/ScreenAutomationHelper"))
++        })
++        .ok_or("无法定位 PD 组件目录")?;
++    let root = root.join("components/pd-device-bridge");
++    let current: Value = serde_json::from_slice(
++        &std::fs::read(root.join("current.json")).map_err(|_| "尚未安装 PD 桥接组件")?,
++    )
++    .map_err(|_| "PD 组件记录无效")?;
++    let version = current
++        .get("version")
++        .and_then(Value::as_str)
++        .ok_or("PD 组件版本无效")?;
++    if !valid_version(version) {
++        return Err("PD 组件版本无效".into());
++    }
++    let path = root
++        .join("versions")
++        .join(version)
++        .join("pd-device-bridge.exe");
++    if !path.is_file() {
++        return Err("PD 桥接组件入口缺失".into());
++    }
++    Ok(path)
++}
++
++#[tauri::command]
++pub async fn pd_execute_cli(
++    window: tauri::WebviewWindow,
++    args: Vec<String>,
++) -> Result<Value, String> {
++    if window.label() != "chat" {
++        return Err("本机查询仅允许从聊天窗口调用".into());
++    }
++    tauri::async_runtime::spawn_blocking(move || {
++        if !valid_cli_args(&args) {
++            return Err("此请求不属于已启用的小助手 CLI 范围".into());
++        }
++        let mut command = Command::new(component_entry()?);
++        command.args(&args);
++        command
++            .stdin(Stdio::null())
++            .stdout(Stdio::piped())
++            .stderr(Stdio::null());
++        #[cfg(windows)]
++        {
++            use std::os::windows::process::CommandExt;
++            command.creation_flags(0x08000000);
++        }
++        let mut child = command.spawn().map_err(|_| "本机桥接组件启动失败")?;
++        let stdout = child.stdout.take().ok_or("本机输出不可用")?;
++        let reader = std::thread::spawn(move || {
++            let mut bytes = Vec::new();
++            stdout
++                .take(8 * 1024 * 1024 + 1)
++                .read_to_end(&mut bytes)
++                .map(|_| bytes)
++        });
++        let deadline = Instant::now() + Duration::from_secs(70);
++        loop {
++            match child.try_wait() {
++                Ok(Some(_)) => break,
++                Ok(None) if Instant::now() < deadline => {
++                    std::thread::sleep(Duration::from_millis(25))
++                }
++                _ => {
++                    let _ = child.kill();
++                    let _ = child.wait();
++                    return Err("本机查询超时".into());
++                }
++            }
++        }
++        let output = reader
++            .join()
++            .map_err(|_| "本机输出读取失败")?
++            .map_err(|_| "本机输出读取失败")?;
++        if output.len() > 8 * 1024 * 1024 {
++            return Err("本机查询结果过大".into());
++        }
++        let result: Value = serde_json::from_slice(&output).map_err(|_| "本机桥接结果格式无效")?;
++        Ok(result)
++    })
++    .await
++    .map_err(|_| "本机查询线程异常".to_string())?
++}
++
++fn valid_version(version: &str) -> bool {
++    let parts: Vec<_> = version.split('.').collect();
++    parts.len() == 3
++        && parts
++            .iter()
++            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::valid_version;
++    #[test]
++    fn component_versions_cannot_escape_the_version_directory() {
++        assert!(valid_version("0.1.0"));
++        for value in ["..", "../0.1.0", "0..1", "C:/tmp", "", "0.1.0/other"] {
++            assert!(!valid_version(value));
++        }
++    }
++}
++
++fn valid_cli_args(args: &[String]) -> bool {
++    if args.len() < 2
++        || args.len() > 128
++        || !matches!(args[0].as_str(), "cli" | "browser")
++        || args.iter().any(|a| a.len() > 4096 || a.contains('\0'))
++    {
++        return false;
++    }
++    if args[0] == "browser" {
++        return true;
++    }
++    match args[1].as_str() {
++        "status" | "describe" | "capabilities" | "health" => args.len() == 2,
++        "access" => args.len() == 3 && args[2] == "list",
++        "window" | "screen" | "mouse" | "keyboard" | "ocr" | "browser" => args.len() >= 3,
++        _ => false,
++    }
++}
++
++#[cfg(test)]
++mod cli_tests {
++    use super::valid_cli_args;
++    #[test]
++    fn only_enabled_helper_cli_arguments_are_allowed() {
++        for args in [
++            vec!["bash", "-c", "run"],
++            vec!["cli", "workflow", "run"],
++            vec!["cli", "access", "activate"],
++        ] {
++            assert!(!valid_cli_args(
++                &args.into_iter().map(String::from).collect::<Vec<_>>()
++            ));
++        }
++        assert!(valid_cli_args(
++            &["browser", "status"]
++                .into_iter()
++                .map(String::from)
++                .collect::<Vec<_>>()
++        ));
++        assert!(valid_cli_args(
++            &["cli", "browser", "status"]
++                .into_iter()
++                .map(String::from)
++                .collect::<Vec<_>>()
++        ));
++        assert!(valid_cli_args(
++            &["cli", "window", "list-visible"]
++                .into_iter()
++                .map(String::from)
++                .collect::<Vec<_>>()
++        ));
++    }
++}
+diff --git a/src/hooks/useChatController.ts b/src/hooks/useChatController.ts
+index e520ad9a18ccb0fef1156e0bc732afcab217f591..2f1374863763e9ce4c95188671828ad6082f6fa2 100644
+--- a/src/hooks/useChatController.ts
++++ b/src/hooks/useChatController.ts
+@@ -7,6 +7,11 @@ import {
+ } from "react";
+ 
+ import type { ComposerSendOptions } from "../components/Composer";
++import {
++  createPdChatBridge,
++  PD_CHAT_PROTOCOL,
++  supportsPdChatBridge,
++} from "../lib/pdChatBridge";
+ import {
+   applyStreamChunk,
+   buildCancelPayload,
+@@ -500,6 +505,7 @@ export function useChatController() {
+         buildChatWsUrl(config.baseUrl, currentAgentId, tokenRef.current),
+       );
+       socketRef.current = socket;
++      const handlePdRequest = createPdChatBridge(socket, thread.id, setError);
+       let assistantText = "";
+       let status = beginStreamStatus();
+ 
+@@ -532,22 +538,25 @@ export function useChatController() {
+       };
+ 
+       socket.onopen = () => {
+-        socket.send(
+-          JSON.stringify(
+-            buildUserTurnPayload({
+-              text,
+-              threadId: thread.id,
+-              sessionKey: thread.sessionKey,
+-              attachments: turnOptions.attachments,
+-              model: turnOptions.model,
+-              mcpServers: turnOptions.mcpServers,
+-            }),
+-          ),
+-        );
++        const payload = buildUserTurnPayload({
++          text,
++          threadId: thread.id,
++          sessionKey: thread.sessionKey,
++          attachments: turnOptions.attachments,
++          model: turnOptions.model,
++          mcpServers: turnOptions.mcpServers,
++        });
++        if (supportsPdChatBridge(socket.url))
++          payload.pd_bridge = {
++            protocol: PD_CHAT_PROTOCOL,
++            operations: ["helper.cli"],
++          };
++        socket.send(JSON.stringify(payload));
+       };
+       socket.onmessage = (event) => {
+         try {
+           const chunk = JSON.parse(event.data);
++          if (handlePdRequest(chunk)) return;
+           status = applyStreamStatusEvent(status, chunk);
+           setStreamStatus(status);
+           const result = applyStreamChunk(assistantText, chunk);
+diff --git a/src/lib/pdChatBridge.test.ts b/src/lib/pdChatBridge.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..face955fdb43978dd5ce78ab6b862a5aae27bc72
+--- /dev/null
++++ b/src/lib/pdChatBridge.test.ts
+@@ -0,0 +1,178 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import {
++  createPdChatBridge,
++  PD_CHAT_PROTOCOL,
++  supportsPdChatBridge,
++  isPdCliArgs,
++  pdCliErrorMessage,
++} from "./pdChatBridge";
++import { tauriApi } from "./tauriApi";
++vi.mock("./tauriApi", () => ({ tauriApi: { pdExecuteCli: vi.fn() } }));
++const request = {
++  type: "pd_cli_request",
++  protocol: PD_CHAT_PROTOCOL,
++  id: "a".repeat(32),
++  thread_id: "thread",
++  method: "helper.cli",
++  args: ["cli", "window", "list-visible"],
++};
++function setup(url = "wss://example.test/chat") {
++  const socket = {
++    url,
++    readyState: WebSocket.OPEN,
++    send: vi.fn(),
++  } as unknown as WebSocket;
++  return {
++    socket,
++    handle: createPdChatBridge(socket, "thread"),
++  };
++}
++beforeEach(() => {
++  vi.resetAllMocks();
++  vi.mocked(tauriApi.pdExecuteCli).mockResolvedValue({
++    ok: true,
++    windows: [{ title: "测试" }],
++  });
++});
++describe("PD bridge on the existing chat socket", () => {
++  it("read-only probes run without confirmation", async () => {
++    const { handle } = setup();
++    for (const [index, args] of [
++      ["cli", "status"],
++      ["cli", "describe"],
++      ["cli", "capabilities"],
++      ["cli", "access", "list"],
++      ["cli", "window", "list-visible"],
++    ].entries())
++      handle({ ...request, id: index.toString(16).padStart(32, "0"), args });
++    await vi.waitFor(() =>
++      expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(5),
++    );
++  });
++  it("reports unavailable helper errors in chat and returns an error frame", async () => {
++    vi.mocked(tauriApi.pdExecuteCli).mockRejectedValue(
++      "未找到已安装的小助手，请先安装 PD 小助手",
++    );
++    const { socket } = setup();
++    const report = vi.fn();
++    createPdChatBridge(socket, "thread", report)(request);
++    await vi.waitFor(() =>
++      expect(report).toHaveBeenCalledWith(
++        "未找到已安装的小助手，请先安装 PD 小助手",
++      ),
++    );
++    expect(
++      JSON.parse(vi.mocked(socket.send).mock.calls[0][0] as string).result.ok,
++    ).toBe(false);
++  });
++  it("idle status is normal; CLI errors preserve useful reasons", () => {
++    expect(
++      pdCliErrorMessage({
++        ok: true,
++        exit_code: 0,
++        stdout: '{"running":false,"status":"idle"}',
++      }),
++    ).toBe("");
++    expect(
++      pdCliErrorMessage({
++        ok: true,
++        exit_code: 1,
++        stdout: '{"ok":false,"error":"小助手连接不可用"}',
++        stderr: "",
++      }),
++    ).toContain("小助手连接不可用");
++  });
++
++  it("ordinary chat chunks never invoke the local helper", () => {
++    const { handle } = setup();
++    expect(handle({ type: "token", content: "normal chat" })).toBe(false);
++    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
++  });
++  it.each([
++    ["cli", "window", "activate", "--handle", "123"],
++    ["cli", "mouse", "click", "--x", "10", "--y", "20"],
++    ["cli", "keyboard", "type", "text"],
++    ["cli", "screen", "capture"],
++    ["cli", "browser", "status"],
++    ["browser", "status"],
++    ["browser", "open", "chrome", "--url", "https://example.test"],
++    [
++      "cli",
++      "browser",
++      "navigate",
++      "--browser",
++      "chrome",
++      "https://example.test",
++    ],
++  ])(
++    "executes supported CLI arguments without an approval callback: %s",
++    async (...args) => {
++      const { socket, handle } = setup();
++      handle({ ...request, args });
++      await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++      expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
++    },
++  );
++  it("rejects operating-system commands and disabled CLI families", () => {
++    for (const args of [
++      ["bash", "-c", "echo test"],
++      ["cli", "workflow", "run"],
++      ["cli", "access", "activate"],
++      ["cli", "screen", "bad\0"],
++    ])
++      expect(isPdCliArgs(args)).toBe(false);
++    expect(isPdCliArgs(["cli", "status"])).toBe(true);
++    expect(isPdCliArgs(["cli", "screen", "capture"])).toBe(true);
++  });
++
++  it("returns the CLI result on the exact same socket and executes duplicates once", async () => {
++    const { socket, handle } = setup();
++    handle(request);
++    handle(request);
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(1);
++    expect(
++      JSON.parse(vi.mocked(socket.send).mock.calls[0][0] as string),
++    ).toEqual({
++      ...request,
++      type: "pd_cli_result",
++      method: undefined,
++      args: undefined,
++      result: { ok: true, windows: [{ title: "测试" }] },
++    });
++  });
++  it("ignores another thread or protocol", () => {
++    const { handle } = setup();
++    handle({ ...request, thread_id: "other" });
++    handle({ ...request, protocol: "other" });
++    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
++  });
++  it("rejects arbitrary operations on the existing HTTP chat connection", async () => {
++    const { socket, handle } = setup("ws://47.77.184.54:8088/chat");
++    handle({ ...request, method: "mouse.click" });
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
++  });
++  it("executes a CLI request over the same remote WS connection", async () => {
++    const { socket, handle } = setup("ws://47.77.184.54:8088/chat");
++    handle(request);
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(request.args);
++    expect(
++      JSON.parse(vi.mocked(socket.send).mock.calls[0][0] as string).type,
++    ).toBe("pd_cli_result");
++  });
++  it("does not return a late result to a closed connection", async () => {
++    const { socket, handle } = setup();
++    handle(request);
++    Object.assign(socket, { readyState: WebSocket.CLOSED });
++    await new Promise((resolve) => setTimeout(resolve, 0));
++    expect(socket.send).not.toHaveBeenCalled();
++  });
++  it("permits existing WS and future WSS connections", () => {
++    expect(supportsPdChatBridge("ws://127.0.0.1:8088/chat")).toBe(true);
++    expect(supportsPdChatBridge("ws://47.77.184.54:8088/chat")).toBe(true);
++    expect(supportsPdChatBridge("https://example.test/chat")).toBe(false);
++    expect(supportsPdChatBridge("wss://example.test/chat")).toBe(true);
++  });
++});
+diff --git a/src/lib/pdChatBridge.ts b/src/lib/pdChatBridge.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7551449a6343aeb7d65ce4907d509984b4e4ec5d
+--- /dev/null
++++ b/src/lib/pdChatBridge.ts
+@@ -0,0 +1,117 @@
++import { tauriApi } from "./tauriApi";
++
++export const PD_CHAT_PROTOCOL = "pd-chat-cli@2";
++
++export function supportsPdChatBridge(url: string): boolean {
++  const parsed = new URL(url);
++  return parsed.protocol === "ws:" || parsed.protocol === "wss:";
++}
++
++export function createPdChatBridge(
++  socket: WebSocket,
++  threadId: string,
++  reportError: (message: string) => void = () => {},
++) {
++  const requests = new Map<string, Promise<unknown>>();
++  return (chunk: unknown): boolean => {
++    if (!chunk || typeof chunk !== "object") return false;
++    const frame = chunk as Record<string, unknown>;
++    if (frame.type !== "pd_cli_request") return false;
++    if (
++      frame.protocol !== PD_CHAT_PROTOCOL ||
++      frame.thread_id !== threadId ||
++      typeof frame.id !== "string" ||
++      !/^[a-f0-9]{32}$/.test(frame.id)
++    )
++      return true;
++    const id = frame.id;
++    let result = requests.get(id);
++    if (!result) {
++      if (requests.size >= 8) return true;
++      result = (async () => {
++        if (
++          !supportsPdChatBridge(socket.url) ||
++          frame.method !== "helper.cli" ||
++          !isPdCliArgs(frame.args)
++        )
++          return { ok: false, error: "此连接或操作不支持本机桥接" };
++        try {
++          if (socket.readyState !== WebSocket.OPEN)
++            return { ok: false, error: "聊天连接已结束" };
++          return await tauriApi.pdExecuteCli(frame.args as string[]);
++        } catch (error) {
++          const reason =
++            error instanceof Error
++              ? error.message
++              : typeof error === "string"
++                ? error
++                : "小助手调用失败，请检查本机安装和运行状态";
++          return { ok: false, error: reason };
++        }
++      })();
++      requests.set(id, result);
++    }
++    void result.then((output) => {
++      const message = pdCliErrorMessage(output);
++      if (socket.readyState === WebSocket.OPEN && message) reportError(message);
++      if (socket.readyState === WebSocket.OPEN)
++        socket.send(
++          JSON.stringify({
++            type: "pd_cli_result",
++            protocol: PD_CHAT_PROTOCOL,
++            id,
++            thread_id: threadId,
++            result: output,
++          }),
++        );
++    });
++    return true;
++  };
++}
++
++export function isPdCliArgs(value: unknown): value is string[] {
++  if (
++    !Array.isArray(value) ||
++    value.length < 2 ||
++    value.length > 128 ||
++    !["cli", "browser"].includes(value[0]) ||
++    value.some(
++      (arg) =>
++        typeof arg !== "string" || arg.length > 4096 || arg.includes("\0"),
++    )
++  )
++    return false;
++  if (value[0] === "browser") return true;
++  const direct = ["status", "describe", "capabilities", "health"];
++  if (direct.includes(value[1])) return value.length === 2;
++  if (value[1] === "access") return value.length === 3 && value[2] === "list";
++  return (
++    ["window", "screen", "mouse", "keyboard", "ocr", "browser"].includes(
++      value[1],
++    ) && value.length >= 3
++  );
++}
++
++export function pdCliErrorMessage(output: unknown): string {
++  if (!output || typeof output !== "object") return "";
++  const value = output as Record<string, unknown>;
++  if (value.ok === false)
++    return typeof value.error === "string"
++      ? value.error.slice(0, 600)
++      : "小助手调用失败，请检查本机安装和运行状态";
++  if (typeof value.exit_code === "number" && value.exit_code !== 0) {
++    let detail = typeof value.stderr === "string" ? value.stderr.trim() : "";
++    if (typeof value.stdout === "string") {
++      try {
++        const parsed = JSON.parse(value.stdout);
++        if (typeof parsed.error === "string") detail = parsed.error;
++      } catch {
++        /* CLI output may be plain text. */
++      }
++    }
++    return (
++      "小助手执行失败：" + (detail.slice(0, 600) || `退出码 ${value.exit_code}`)
++    );
++  }
++  return "";
++}
+diff --git a/src/lib/tauriApi.ts b/src/lib/tauriApi.ts
+index e1c34772725899b776f024e1e51c2c0ed2463935..82201316d246ac9a45593d3ab29c66e928482cc2 100644
+--- a/src/lib/tauriApi.ts
++++ b/src/lib/tauriApi.ts
+@@ -4,6 +4,7 @@ import { emit, listen } from "@tauri-apps/api/event";
+ import type { AppConfig, MascotId } from "./types";
+ 
+ export const tauriApi = {
++  pdExecuteCli: (args: string[]) => invoke<unknown>("pd_execute_cli", { args }),
+   loadConfig: () => invoke<AppConfig>("load_config"),
+   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
+   patchConfig: (patch: Partial<AppConfig>) =>
+diff --git a/src/windows/ChatWindow.test.tsx b/src/windows/ChatWindow.test.tsx
+index 3643c2342f326939ae8171d7e0b01e799eb458ed..1e3e2415745dec3a6fe7f4b4d5c2fe103180c9d6 100644
+--- a/src/windows/ChatWindow.test.tsx
++++ b/src/windows/ChatWindow.test.tsx
+@@ -21,6 +21,7 @@ import { OctopHttpError } from "../lib/octopHttp";
+ import ChatWindow from "./ChatWindow";
+ 
+ const mocks = vi.hoisted(() => ({
++  pdExecuteCli: vi.fn(),
+   loadConfig: vi.fn(),
+   patchConfig: vi.fn(),
+   getSecret: vi.fn(),
+@@ -55,6 +56,7 @@ vi.mock("../lib/tauriWindowApi", () => ({
+ 
+ vi.mock("../lib/tauriApi", () => ({
+   tauriApi: {
++    pdExecuteCli: mocks.pdExecuteCli,
+     loadConfig: mocks.loadConfig,
+     patchConfig: mocks.patchConfig,
+     getSecret: mocks.getSecret,
+@@ -82,6 +84,9 @@ vi.mock("../lib/octopHttp", async (importOriginal) => {
+ });
+ 
+ class FakeWebSocket {
++  static OPEN = 1;
++  static CONNECTING = 0;
++  static CLOSED = 3;
+   static instances: FakeWebSocket[] = [];
+   readyState: number = WebSocket.CONNECTING;
+   sent: string[] = [];
+@@ -121,6 +126,7 @@ describe("ChatWindow", () => {
+   afterEach(() => {
+     cleanup();
+     vi.unstubAllGlobals();
++    vi.restoreAllMocks();
+   });
+ 
+   beforeEach(() => {
+@@ -168,6 +174,85 @@ describe("ChatWindow", () => {
+     });
+   });
+ 
++  it.each(["http://47.77.184.54:8088", "https://octop.example"])(
++    "在原聊天连接 %s 回传 PD 查询，并继续接收 AI 回复",
++    async (baseUrl) => {
++      mocks.loadConfig.mockResolvedValue({
++        ...DEFAULT_APP_CONFIG,
++        baseUrl,
++        username: "juba",
++        threadIdByAgent: {},
++      });
++      mocks.pdExecuteCli.mockResolvedValue({
++        ok: true,
++        windows: [{ title: "测试窗口" }],
++      });
++      render(<ChatWindow />);
++      await screen.findByRole("region", { name: "暂无消息" });
++      fireEvent.change(screen.getByLabelText("消息"), {
++        target: { value: "我的电脑上有哪些窗口" },
++      });
++      fireEvent.click(screen.getByRole("button", { name: "发送" }));
++      await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
++      const socket = FakeWebSocket.instances[0];
++      socket.open();
++      expect(JSON.parse(socket.sent[0]).pd_bridge).toEqual({
++        protocol: "pd-chat-cli@2",
++        operations: ["helper.cli"],
++      });
++      socket.message({
++        type: "pd_cli_request",
++        protocol: "pd-chat-cli@2",
++        id: "b".repeat(32),
++        thread_id: "new-thread",
++        method: "helper.cli",
++        args: ["cli", "window", "list-visible"],
++      });
++      await waitFor(() => expect(socket.sent).toHaveLength(2));
++      expect(JSON.parse(socket.sent[1])).toMatchObject({
++        type: "pd_cli_result",
++        thread_id: "new-thread",
++        result: { ok: true, windows: [{ title: "测试窗口" }] },
++      });
++      expect(mocks.pdExecuteCli).toHaveBeenCalledTimes(1);
++      expect(FakeWebSocket.instances).toHaveLength(1);
++      socket.message({ type: "token", content: "找到了测试窗口" });
++      socket.message({ type: "done" });
++      expect(await screen.findByText("找到了测试窗口")).toBeInTheDocument();
++    },
++  );
++
++  it("本机小助手不可用时在聊天中显示具体错误", async () => {
++    mocks.pdExecuteCli.mockRejectedValue("未找到已安装的小助手");
++    render(<ChatWindow />);
++    await screen.findByRole("region", { name: "暂无消息" });
++    fireEvent.change(screen.getByLabelText("消息"), {
++      target: { value: "激活窗口" },
++    });
++    fireEvent.click(screen.getByRole("button", { name: "发送" }));
++    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
++    const socket = FakeWebSocket.instances[0];
++    socket.open();
++    socket.message({
++      type: "pd_cli_request",
++      protocol: "pd-chat-cli@2",
++      id: "c".repeat(32),
++      thread_id: "new-thread",
++      method: "helper.cli",
++      args: ["cli", "window", "activate", "--handle", "123"],
++    });
++    expect(await screen.findByRole("alert")).toHaveTextContent(
++      "未找到已安装的小助手",
++    );
++    expect(mocks.pdExecuteCli).toHaveBeenCalledWith([
++      "cli",
++      "window",
++      "activate",
++      "--handle",
++      "123",
++    ]);
++  });
++
+   it("紧凑窗口使用更高的初始高度，并允许缩放", async () => {
+     render(<ChatWindow />);
+ 
