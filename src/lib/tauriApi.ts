@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 
-import type { TaijiAnimationState } from "./mascotAnimation";
 import type { AppConfig, MascotId } from "./types";
 
 export const tauriApi = {
@@ -40,7 +39,4 @@ export const tauriApi = {
   emitMascotChanged: (mascotId: MascotId) => emit("mascot-changed", mascotId),
   listenMascotChanged: (handler: (mascotId: MascotId) => void) =>
     listen<MascotId>("mascot-changed", ({ payload }) => handler(payload)),
-  emitPetState: (state: TaijiAnimationState) => emit("pet-state", state),
-  listenPetState: (handler: (state: TaijiAnimationState) => void) =>
-    listen<TaijiAnimationState>("pet-state", ({ payload }) => handler(payload)),
 };

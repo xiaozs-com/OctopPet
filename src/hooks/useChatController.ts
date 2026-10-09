@@ -31,7 +31,6 @@ import {
   nextChatMessageId,
 } from "../lib/chatHelpers";
 import { resolveThreadForAgent, withThreadForAgent } from "../lib/configLogic";
-import type { TaijiAnimationState } from "../lib/mascotAnimation";
 import {
   enqueueChatItem,
   shiftChatItem,
@@ -52,7 +51,6 @@ import type {
   ConnectorOption,
   ResolvedModel,
 } from "../lib/octopTypes";
-import { derivePetState } from "../lib/petState";
 import {
   applyStreamStatusEvent,
   beginStreamStatus,
@@ -73,9 +71,6 @@ interface ActiveThread {
   id: string;
   sessionKey?: string;
 }
-
-/** How long the pet holds a transient animation (greeting, celebration). */
-const PET_FLASH_MS = 2000;
 
 export function useChatController() {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -789,81 +784,6 @@ export function useChatController() {
     connection === "streaming"
       ? formatStreamStatusLabel(streamStatus, statusNow)
       : null;
-
-  // --- Pet animation ------------------------------------------------------
-  // The pet window mirrors chat activity through the `pet-state` event. The
-  // chat window is created hidden, so resting means "listening" only while it
-  // is actually on screen.
-  const [chatOpen, setChatOpen] = useState(
-    () => document.visibilityState === "visible",
-  );
-  const [petFlash, setPetFlash] = useState<TaijiAnimationState | null>(null);
-  const petFlashTimerRef = useRef<number | null>(null);
-  const wasChatOpenRef = useRef(false);
-  const previousConnectionRef = useRef(connection);
-
-  const flashPetState = useCallback((state: TaijiAnimationState) => {
-    setPetFlash(state);
-    if (petFlashTimerRef.current !== null) {
-      window.clearTimeout(petFlashTimerRef.current);
-    }
-    petFlashTimerRef.current = window.setTimeout(() => {
-      petFlashTimerRef.current = null;
-      setPetFlash(null);
-    }, PET_FLASH_MS);
-  }, []);
-
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      setChatOpen(document.visibilityState === "visible");
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () =>
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-
-  // Wave when the chat window comes back on screen.
-  useEffect(() => {
-    if (chatOpen && !wasChatOpenRef.current) {
-      flashPetState("waving");
-    }
-    wasChatOpenRef.current = chatOpen;
-  }, [chatOpen, flashPetState]);
-
-  // Celebrate a reply that finished without an error.
-  useEffect(() => {
-    const previous = previousConnectionRef.current;
-    previousConnectionRef.current = connection;
-    if (previous === "streaming" && connection === "connected" && !error) {
-      flashPetState("success");
-    }
-  }, [connection, error, flashPetState]);
-
-  const petState =
-    petFlash ??
-    derivePetState({
-      chatOpen,
-      needsSettings,
-      error,
-      connection,
-      loadingHistory,
-      queueLength: queue.length,
-      streamPhase: streamStatus.phase,
-      hasAssistantText: streamStatus.hasAssistantText,
-    });
-
-  useEffect(() => {
-    void tauriApi.emitPetState(petState).catch(() => undefined);
-  }, [petState]);
-
-  useEffect(
-    () => () => {
-      if (petFlashTimerRef.current !== null) {
-        window.clearTimeout(petFlashTimerRef.current);
-      }
-    },
-    [],
-  );
 
   return {
     rootRef,
