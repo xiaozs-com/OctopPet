@@ -5,6 +5,11 @@ import type { TaijiAnimationState } from "./mascotAnimation";
 import type { AppConfig, MascotId } from "./types";
 
 export const tauriApi = {
+  pdExecuteCli: (args: string[], input?: unknown) =>
+    invoke<unknown>(
+      "pd_execute_cli",
+      input === undefined ? { args } : { args, input },
+    ),
   loadConfig: () => invoke<AppConfig>("load_config"),
   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
   patchConfig: (patch: Partial<AppConfig>) =>

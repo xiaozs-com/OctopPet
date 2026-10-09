@@ -1,0 +1,3298 @@
+diff --git a/.gitignore b/.gitignore
+index dce055b9974c456ce4eec44abc1da5f2a08612ef..d3c782dae31ea5c7fc19e4fe952f2a5c203768be 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -79,3 +79,4 @@ venv/
+ *.bak
+ *.tmp
+ .cache/
++build/component-release/
+diff --git a/package-lock.json b/package-lock.json
+index 0e1ef1b9b6a594fbbfa55c0dc4d5fdb13ef5467f..ddaecf372c99c55baf4f1f7975dfadc20779ce88 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "octop-pet",
+-  "version": "0.2.0",
++  "version": "0.2.3",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "octop-pet",
+-      "version": "0.2.0",
++      "version": "0.2.3",
+       "dependencies": {
+         "@tauri-apps/api": "^2",
+         "@tauri-apps/plugin-http": "^2.5.9",
+diff --git a/package.json b/package.json
+index 10f7eacb28e246ef3c71221d3b79e451572ca7da..c8fc03668e641d603dc4623ec32bea6c7f19a584 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "octop-pet",
+   "private": true,
+-  "version": "0.2.0",
++  "version": "0.2.3",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index f0bc3616687abea17f1564f9c63763296bbea9be..3db699a71c5f17d8d4420602b12e6fd4662735fd 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -2653,7 +2653,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "octop-pet"
+-version = "0.2.0"
++version = "0.2.3"
+ dependencies = [
+  "keyring",
+  "objc2",
+@@ -2668,6 +2668,8 @@ dependencies = [
+  "tauri-plugin-global-shortcut",
+  "tauri-plugin-http",
+  "tauri-plugin-opener",
++ "tokio",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 717588fac203691fe3497400898e876ee656d68f..e51b561f087920ce1408138304bdeca62281a40e 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "octop-pet"
+-version = "0.2.0"
++version = "0.2.3"
+ description = "Desktop companion for a remote Octop instance"
+ authors = ["you"]
+ edition = "2021"
+@@ -29,6 +29,8 @@ tauri-plugin-http = "2"
+ 
+ [target.'cfg(windows)'.dependencies]
+ raw-window-handle = "0.6"
++tokio = { version = "1.53.1", features = ["rt", "net", "time", "io-util"] }
++windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Console"] }
+ 
+ [target.'cfg(target_os = "macos")'.dependencies]
+ objc2 = "0.6"
+diff --git a/src-tauri/src/config_cmd.rs b/src-tauri/src/config_cmd.rs
+index 4d4bbe80ae813493a5285ce4f4f0eec850433e44..ff65d4aac39db29c11d01a1a4c3eba5bcdb0eb86 100644
+--- a/src-tauri/src/config_cmd.rs
++++ b/src-tauri/src/config_cmd.rs
+@@ -3,7 +3,9 @@ use std::{collections::HashMap, fs, path::Path, sync::Mutex};
+ use serde::de::DeserializeOwned;
+ use serde::{Deserialize, Serialize};
+ use serde_json::Value;
+-use tauri::{AppHandle, Manager};
++use tauri::AppHandle;
++#[cfg(not(windows))]
++use tauri::Manager;
+ 
+ const CONFIG_FILE_NAME: &str = "config.json";
+ static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+@@ -127,6 +129,12 @@ pub fn patch_at_path(path: &Path, patch: Value) -> Result<AppConfig, String> {
+ }
+ 
+ fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
++    #[cfg(windows)]
++    {
++        let _ = app;
++        Ok(crate::component_runtime::data_dir()?.join(CONFIG_FILE_NAME))
++    }
++    #[cfg(not(windows))]
+     app.path()
+         .app_config_dir()
+         .map(|path| path.join(CONFIG_FILE_NAME))
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index a52c03d4ca8a77aa5da0b446c169238b46f51fce..1bdf9897567c78f90038f9913420f7fa6c242012 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,3 +1,5 @@
++#[cfg(windows)]
++pub mod component_runtime;
+ pub mod config_cmd;
+ pub mod pd_bridge_cmd;
+ pub mod secrets_cmd;
+@@ -6,6 +8,14 @@ pub mod window_cmd;
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
++    #[cfg(windows)]
++    let host = component_runtime::entry();
++    #[allow(unused_mut)]
++    let mut context = tauri::generate_context!();
++    #[cfg(windows)]
++    for window in &mut context.config_mut().app.windows {
++        window.create = false;
++    }
+     tauri::Builder::default()
+         .plugin(tauri_plugin_opener::init())
+         .plugin(tauri_plugin_dialog::init())
+@@ -28,7 +38,16 @@ pub fn run() {
+             }
+             _ => {}
+         })
+-        .setup(|app| {
++        .setup(move |app| {
++            #[cfg(windows)]
++            {
++                let data_dir = component_runtime::data_dir()?;
++                for config in &app.config().app.windows {
++                    tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
++                        .data_directory(data_dir.join("webview"))
++                        .build()?;
++                }
++            }
+             #[cfg(target_os = "macos")]
+             {
+                 // Desktop-pet style: stay out of Dock/Stage Manager focus fights
+@@ -40,6 +59,8 @@ pub fn run() {
+             window_cmd::ensure_dialog_windows_transparent(app.handle());
+             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
+             window_cmd::spawn_pet_transparency_watchdog(app.handle());
++            #[cfg(windows)]
++            host.serve(app.handle().clone());
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
+@@ -61,6 +82,6 @@ pub fn run() {
+             window_cmd::apply_window_deactivate_policy,
+             tray::reload_hotkeys,
+         ])
+-        .run(tauri::generate_context!())
++        .run(context)
+         .expect("error while running tauri application");
+ }
+diff --git a/src-tauri/src/pd_bridge_cmd.rs b/src-tauri/src/pd_bridge_cmd.rs
+index 1c6bad441c12d0583c4985c44dff97959062faac..7ec8d8c401167947bda075dc5528d0db07faa305 100644
+--- a/src-tauri/src/pd_bridge_cmd.rs
++++ b/src-tauri/src/pd_bridge_cmd.rs
+@@ -1,7 +1,7 @@
+-//! Thin adapter to the independently installed, read-only PD component.
++//! Thin adapter to the independently installed helper CLI transport.
+ use serde_json::Value;
+ use std::{
+-    io::Read,
++    io::{Read, Write},
+     path::PathBuf,
+     process::{Command, Stdio},
+     time::{Duration, Instant},
+@@ -16,6 +16,25 @@ fn component_entry() -> Result<PathBuf, String> {
+         }
+         return Err("开发组件路径无效".into());
+     }
++    if let Ok(exe) = std::env::current_exe() {
++        if let Some(directory) = exe.parent() {
++            let metadata_path = directory.join("component.json");
++            if metadata_path.is_file() {
++                let metadata: Value = serde_json::from_slice(
++                    &std::fs::read(metadata_path).map_err(|_| "宠物组件记录不可读")?,
++                )
++                .map_err(|_| "宠物组件记录无效")?;
++                if metadata["id"] != "octoppet" || metadata["protocol"] != "octoppet-component@1" {
++                    return Err("宠物组件协议不兼容".into());
++                }
++                let path = directory.join("pd-device-bridge.exe");
++                return path
++                    .is_file()
++                    .then_some(path)
++                    .ok_or("宠物包中的 CLI 桥接缺失".into());
++            }
++        }
++    }
+     let root = std::env::var_os("SCREEN_AUTOMATION_HOME")
+         .map(PathBuf::from)
+         .or_else(|| {
+@@ -49,18 +68,37 @@ fn component_entry() -> Result<PathBuf, String> {
+ pub async fn pd_execute_cli(
+     window: tauri::WebviewWindow,
+     args: Vec<String>,
++    input: Option<Value>,
+ ) -> Result<Value, String> {
+     if window.label() != "chat" {
+-        return Err("本机查询仅允许从聊天窗口调用".into());
++        return Err("本机 CLI 仅允许从聊天窗口调用".into());
+     }
+     tauri::async_runtime::spawn_blocking(move || {
+         if !valid_cli_args(&args) {
+-            return Err("此请求不属于已启用的小助手 CLI 范围".into());
++            return Err("CLI 参数格式无效".into());
+         }
+         let mut command = Command::new(component_entry()?);
+-        command.args(&args);
++        let payload = if let Some(input) = input {
++            if !input.is_object() {
++                return Err("CLI 输入格式无效".into());
++            }
++            let bytes = serde_json::to_vec(&serde_json::json!({"args":args,"input":input}))
++                .map_err(|_| "CLI 输入序列化失败")?;
++            if bytes.len() > 8 * 1024 * 1024 {
++                return Err("CLI 输入超过 8 MiB".into());
++            }
++            command.arg("--request-json");
++            Some(bytes)
++        } else {
++            command.args(&args);
++            None
++        };
+         command
+-            .stdin(Stdio::null())
++            .stdin(if payload.is_some() {
++                Stdio::piped()
++            } else {
++                Stdio::null()
++            })
+             .stdout(Stdio::piped())
+             .stderr(Stdio::null());
+         #[cfg(windows)]
+@@ -69,11 +107,15 @@ pub async fn pd_execute_cli(
+             command.creation_flags(0x08000000);
+         }
+         let mut child = command.spawn().map_err(|_| "本机桥接组件启动失败")?;
++        let writer = payload.map(|bytes| {
++            let mut stdin = child.stdin.take().expect("piped CLI input");
++            std::thread::spawn(move || stdin.write_all(&bytes))
++        });
+         let stdout = child.stdout.take().ok_or("本机输出不可用")?;
+         let reader = std::thread::spawn(move || {
+             let mut bytes = Vec::new();
+             stdout
+-                .take(8 * 1024 * 1024 + 1)
++                .take(16 * 1024 * 1024 + 1)
+                 .read_to_end(&mut bytes)
+                 .map(|_| bytes)
+         });
+@@ -87,22 +129,25 @@ pub async fn pd_execute_cli(
+                 _ => {
+                     let _ = child.kill();
+                     let _ = child.wait();
+-                    return Err("本机查询超时".into());
++                    return Err("本机 CLI 调用超时".into());
+                 }
+             }
+         }
++        if let Some(writer) = writer {
++            let _ = writer.join();
++        }
+         let output = reader
+             .join()
+             .map_err(|_| "本机输出读取失败")?
+             .map_err(|_| "本机输出读取失败")?;
+-        if output.len() > 8 * 1024 * 1024 {
+-            return Err("本机查询结果过大".into());
++        if output.len() > 16 * 1024 * 1024 {
++            return Err("本机 CLI 结果过大".into());
+         }
+         let result: Value = serde_json::from_slice(&output).map_err(|_| "本机桥接结果格式无效")?;
+         Ok(result)
+     })
+     .await
+-    .map_err(|_| "本机查询线程异常".to_string())?
++    .map_err(|_| "本机 CLI 线程异常".to_string())?
+ }
+ 
+ fn valid_version(version: &str) -> bool {
+@@ -126,33 +171,31 @@ mod tests {
+ }
+ 
+ fn valid_cli_args(args: &[String]) -> bool {
+-    if args.len() < 2
++    if args.is_empty()
+         || args.len() > 128
+         || !matches!(args[0].as_str(), "cli" | "browser")
+         || args.iter().any(|a| a.len() > 4096 || a.contains('\0'))
+     {
+         return false;
+     }
+-    if args[0] == "browser" {
+-        return true;
+-    }
+-    match args[1].as_str() {
+-        "status" | "describe" | "capabilities" | "health" => args.len() == 2,
+-        "access" => args.len() == 3 && args[2] == "list",
+-        "window" | "screen" | "mouse" | "keyboard" | "ocr" | "browser" => args.len() >= 3,
+-        _ => false,
+-    }
++    true
+ }
+ 
+ #[cfg(test)]
+ mod cli_tests {
+     use super::valid_cli_args;
+     #[test]
+-    fn only_enabled_helper_cli_arguments_are_allowed() {
++    fn all_helper_subcommands_are_allowed() {
++        assert!(valid_cli_args(
++            &["cli", "workflow", "schema"].map(String::from)
++        ));
++        assert!(valid_cli_args(
++            &["cli", "future-command", "--help"].map(String::from)
++        ));
+         for args in [
+             vec!["bash", "-c", "run"],
+-            vec!["cli", "workflow", "run"],
+-            vec!["cli", "access", "activate"],
++            vec!["powershell", "-Command", "run"],
++            vec!["cmd", "/c", "run"],
+         ] {
+             assert!(!valid_cli_args(
+                 &args.into_iter().map(String::from).collect::<Vec<_>>()
+diff --git a/src-tauri/src/secrets_cmd.rs b/src-tauri/src/secrets_cmd.rs
+index 48e7cfe9ea44a20b98e537d8c1c1bf1c921fb6fc..19eaef0ffb2c6b18076dafbf18e403f900f70490 100644
+--- a/src-tauri/src/secrets_cmd.rs
++++ b/src-tauri/src/secrets_cmd.rs
+@@ -1,11 +1,10 @@
+-use std::{
+-    collections::HashMap,
+-    fs,
+-    path::{Path, PathBuf},
+-    sync::Mutex,
+-};
++use std::{collections::HashMap, fs, path::Path, sync::Mutex};
+ 
+-use tauri::{AppHandle, Manager};
++#[cfg(debug_assertions)]
++use std::path::PathBuf;
++use tauri::AppHandle;
++#[cfg(all(debug_assertions, not(windows)))]
++use tauri::Manager;
+ 
+ use crate::config_cmd;
+ 
+@@ -14,6 +13,7 @@ use keyring::{Entry, Error};
+ 
+ #[cfg(not(debug_assertions))]
+ const KEYRING_SERVICE: &str = "com.octop.pet";
++#[cfg(debug_assertions)]
+ const DEV_SECRETS_FILE: &str = "dev-secrets.json";
+ static SECRETS_WRITE_LOCK: Mutex<()> = Mutex::new(());
+ 
+@@ -87,6 +87,12 @@ pub fn delete_secret_from_file(path: &Path, account: &str) -> Result<(), String>
+ 
+ #[cfg(debug_assertions)]
+ fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
++    #[cfg(windows)]
++    {
++        let _ = app;
++        Ok(crate::component_runtime::data_dir()?.join(DEV_SECRETS_FILE))
++    }
++    #[cfg(not(windows))]
+     app.path()
+         .app_config_dir()
+         .map(|dir| dir.join(DEV_SECRETS_FILE))
+@@ -114,6 +120,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
+         return Ok(None);
+     }
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+@@ -132,6 +140,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
+ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> {
+     let username = config_cmd::load_config(app.clone())?.username;
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+@@ -148,6 +158,8 @@ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), Stri
+ pub fn delete_secret(app: AppHandle, key: String) -> Result<(), String> {
+     let username = config_cmd::load_config(app.clone())?.username;
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
+index 922b044fe56b0dbadd7cf9d9418327026941c449..bc2d6f43869091dd9030213ab70ad355ca52756b 100644
+--- a/src-tauri/src/tray.rs
++++ b/src-tauri/src/tray.rs
+@@ -175,6 +175,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
+     let tray = TrayIconBuilder::new()
+         .icon(icon)
+         .icon_as_template(true)
++        .tooltip(app.config().product_name.as_deref().unwrap_or_default())
+         .menu(&menu)
+         .on_menu_event(|app, event| {
+             if let Err(error) = handle_menu_event(app, event.id().as_ref()) {
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 745b91113b62954d99da0b4352f77c15b92adb8c..21cda10d68e188bec5a297ae13c31de318e86531 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+-  "productName": "OctopPet",
+-  "version": "0.2.0",
++  "productName": "Paldee Pet",
++  "version": "0.2.3",
+   "identifier": "com.octop.pet",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+@@ -28,7 +28,7 @@
+       },
+       {
+         "label": "chat",
+-        "title": "Octop Chat",
++        "title": "Paldee Pet",
+         "width": 400,
+         "height": 400,
+         "minWidth": 280,
+diff --git a/src/lib/pdChatBridge.test.ts b/src/lib/pdChatBridge.test.ts
+index face955fdb43978dd5ce78ab6b862a5aae27bc72..0cb66c80a0f98e8c09841013829425c2bdb12c82 100644
+--- a/src/lib/pdChatBridge.test.ts
++++ b/src/lib/pdChatBridge.test.ts
+@@ -35,6 +35,52 @@ beforeEach(() => {
+   });
+ });
+ describe("PD bridge on the existing chat socket", () => {
++  it.each([
++    "workflow",
++    "memory",
++    "runs",
++    "components",
++    "file",
++    "agent",
++    "future-command",
++  ])("forwards complete helper CLI family %s", async (family) => {
++    const { socket, handle } = setup();
++    const args = ["cli", family, "--help"];
++    handle({ ...request, args });
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
++  });
++  it("passes stdin and files on the same socket and deduplicates the operation", async () => {
++    const { socket, handle } = setup();
++    const input = {
++      stdin: "中文 JSON",
++      uploads: [],
++      downloads: ["C:/test/source.py"],
++    };
++    const frame = { ...request, method: "helper.cli.io", input };
++    handle(frame);
++    handle(frame);
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(1);
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(request.args, input);
++  });
++  it("executes more than eight completed commands on a persistent chat", async () => {
++    const { socket, handle } = setup();
++    for (let index = 0; index < 20; index++) {
++      handle({ ...request, id: index.toString(16).padStart(32, "0") });
++      await vi.waitFor(() =>
++        expect(socket.send).toHaveBeenCalledTimes(index + 1),
++      );
++    }
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(20);
++  });
++  it("rejects malformed IO envelopes before invoking the helper", async () => {
++    const { socket, handle } = setup();
++    handle({ ...request, method: "helper.cli.io", input: { stdin: 123 } });
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
++  });
++
+   it("read-only probes run without confirmation", async () => {
+     const { handle } = setup();
+     for (const [index, args] of [
+@@ -113,11 +159,11 @@ describe("PD bridge on the existing chat socket", () => {
+       expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
+     },
+   );
+-  it("rejects operating-system commands and disabled CLI families", () => {
++  it("rejects invalid framing and operating-system entry points", () => {
+     for (const args of [
+       ["bash", "-c", "echo test"],
+-      ["cli", "workflow", "run"],
+-      ["cli", "access", "activate"],
++      ["powershell", "-Command", "run"],
++      ["cmd", "/c", "run"],
+       ["cli", "screen", "bad\0"],
+     ])
+       expect(isPdCliArgs(args)).toBe(false);
+diff --git a/src/lib/pdChatBridge.ts b/src/lib/pdChatBridge.ts
+index 7551449a6343aeb7d65ce4907d509984b4e4ec5d..bfd71a68535e648c58f2cf5a9cb6c2bc6d166cc0 100644
+--- a/src/lib/pdChatBridge.ts
++++ b/src/lib/pdChatBridge.ts
+@@ -13,6 +13,7 @@ export function createPdChatBridge(
+   reportError: (message: string) => void = () => {},
+ ) {
+   const requests = new Map<string, Promise<unknown>>();
++  const activeRequests = new Set<string>();
+   return (chunk: unknown): boolean => {
+     if (!chunk || typeof chunk !== "object") return false;
+     const frame = chunk as Record<string, unknown>;
+@@ -27,28 +28,49 @@ export function createPdChatBridge(
+     const id = frame.id;
+     let result = requests.get(id);
+     if (!result) {
+-      if (requests.size >= 8) return true;
+-      result = (async () => {
+-        if (
+-          !supportsPdChatBridge(socket.url) ||
+-          frame.method !== "helper.cli" ||
+-          !isPdCliArgs(frame.args)
+-        )
+-          return { ok: false, error: "此连接或操作不支持本机桥接" };
+-        try {
+-          if (socket.readyState !== WebSocket.OPEN)
+-            return { ok: false, error: "聊天连接已结束" };
+-          return await tauriApi.pdExecuteCli(frame.args as string[]);
+-        } catch (error) {
+-          const reason =
+-            error instanceof Error
+-              ? error.message
+-              : typeof error === "string"
+-                ? error
+-                : "小助手调用失败，请检查本机安装和运行状态";
+-          return { ok: false, error: reason };
+-        }
+-      })();
++      if (activeRequests.size >= 8) {
++        result = Promise.resolve({
++          ok: false,
++          error: "本机 CLI 请求队列繁忙，请稍后重试",
++        });
++      } else {
++        activeRequests.add(id);
++        result = (async () => {
++          if (
++            !supportsPdChatBridge(socket.url) ||
++            !["helper.cli", "helper.cli.io"].includes(String(frame.method)) ||
++            !isPdCliArgs(frame.args)
++          )
++            return { ok: false, error: "此连接或操作不支持本机桥接" };
++          try {
++            if (socket.readyState !== WebSocket.OPEN)
++              return { ok: false, error: "聊天连接已结束" };
++            if (frame.method === "helper.cli.io") {
++              if (!isPdCliInput(frame.input))
++                return { ok: false, error: "CLI 标准输入或文件传输参数无效" };
++              return await tauriApi.pdExecuteCli(
++                frame.args as string[],
++                frame.input,
++              );
++            }
++            return await tauriApi.pdExecuteCli(frame.args as string[]);
++          } catch (error) {
++            const reason =
++              error instanceof Error
++                ? error.message
++                : typeof error === "string"
++                  ? error
++                  : "小助手调用失败，请检查本机安装和运行状态";
++            return { ok: false, error: reason };
++          }
++        })().finally(() => {
++          activeRequests.delete(id);
++          for (const key of requests.keys()) {
++            if (requests.size <= 128) break;
++            if (!activeRequests.has(key)) requests.delete(key);
++          }
++        });
++      }
+       requests.set(id, result);
+     }
+     void result.then((output) => {
+@@ -72,7 +94,7 @@ export function createPdChatBridge(
+ export function isPdCliArgs(value: unknown): value is string[] {
+   if (
+     !Array.isArray(value) ||
+-    value.length < 2 ||
++    value.length < 1 ||
+     value.length > 128 ||
+     !["cli", "browser"].includes(value[0]) ||
+     value.some(
+@@ -81,15 +103,31 @@ export function isPdCliArgs(value: unknown): value is string[] {
+     )
+   )
+     return false;
+-  if (value[0] === "browser") return true;
+-  const direct = ["status", "describe", "capabilities", "health"];
+-  if (direct.includes(value[1])) return value.length === 2;
+-  if (value[1] === "access") return value.length === 3 && value[2] === "list";
+-  return (
+-    ["window", "screen", "mouse", "keyboard", "ocr", "browser"].includes(
+-      value[1],
+-    ) && value.length >= 3
+-  );
++  return true;
++}
++
++export function isPdCliInput(value: unknown): boolean {
++  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
++  const input = value as Record<string, unknown>;
++  if (
++    Object.keys(input).some(
++      (key) => !["stdin", "uploads", "downloads"].includes(key),
++    )
++  )
++    return false;
++  if (
++    input.stdin !== undefined &&
++    (typeof input.stdin !== "string" || input.stdin.length > 1024 * 1024)
++  )
++    return false;
++  for (const key of ["uploads", "downloads"]) {
++    if (
++      input[key] !== undefined &&
++      (!Array.isArray(input[key]) || input[key].length > 128)
++    )
++      return false;
++  }
++  return JSON.stringify(input).length <= 8 * 1024 * 1024;
+ }
+ 
+ export function pdCliErrorMessage(output: unknown): string {
+diff --git a/src/lib/tauriApi.ts b/src/lib/tauriApi.ts
+index 82201316d246ac9a45593d3ab29c66e928482cc2..bd73baa7ef86c3dc116f303870fd3225aeec9e43 100644
+--- a/src/lib/tauriApi.ts
++++ b/src/lib/tauriApi.ts
+@@ -4,7 +4,11 @@ import { emit, listen } from "@tauri-apps/api/event";
+ import type { AppConfig, MascotId } from "./types";
+ 
+ export const tauriApi = {
+-  pdExecuteCli: (args: string[]) => invoke<unknown>("pd_execute_cli", { args }),
++  pdExecuteCli: (args: string[], input?: unknown) =>
++    invoke<unknown>(
++      "pd_execute_cli",
++      input === undefined ? { args } : { args, input },
++    ),
+   loadConfig: () => invoke<AppConfig>("load_config"),
+   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
+   patchConfig: (patch: Partial<AppConfig>) =>
+diff --git a/src/main.tsx b/src/main.tsx
+index 452d9d3549cb400231ecc1b0139eda1c3041f691..6e40ff4718b8289a19c471e173d3466512f752bc 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,11 +2,13 @@ import React from "react";
+ import ReactDOM from "react-dom/client";
+ 
+ import "./App.css";
++import { APP_NAME } from "./lib/brand";
+ import { getWindowLabel } from "./lib/tauriWindowApi";
+ import ChatWindow from "./windows/ChatWindow";
+ import PetWindow from "./windows/PetWindow";
+ import SettingsWindow from "./windows/SettingsWindow";
+ 
++document.title = APP_NAME;
+ const label = getWindowLabel();
+ document.documentElement.dataset.windowLabel = label;
+ 
+diff --git a/src/windows/SettingsWindow.tsx b/src/windows/SettingsWindow.tsx
+index c5475c732d530e56ad822cad339ca17fa699557b..610964e43cc18fe00ececd9f047f9a15022b08d9 100644
+--- a/src/windows/SettingsWindow.tsx
++++ b/src/windows/SettingsWindow.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useRef, useState } from "react";
+ 
++import { APP_NAME } from "../lib/brand";
+ import ShortcutRecorder from "../components/ShortcutRecorder";
+ import WindowCloseButton from "../components/WindowCloseButton";
+ import {
+@@ -476,7 +477,7 @@ export default function SettingsWindow() {
+             <div className="settings-rows settings-about">
+               <div className="settings-row">
+                 <span>应用</span>
+-                <span>OctopPet</span>
++                <span>{APP_NAME}</span>
+               </div>
+               <div className="settings-row">
+                 <span>版本</span>
+diff --git a/src/lib/brand.ts b/src/lib/brand.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cd42edea8df91eabc1ec2e05b430fce249c76cd
+--- /dev/null
++++ b/src/lib/brand.ts
+@@ -0,0 +1,3 @@
++import { productName } from "../../src-tauri/tauri.conf.json";
++
++export const APP_NAME = productName;
+diff --git a/docs/upstream-sync/PALDEE_SYNC.md b/docs/upstream-sync/PALDEE_SYNC.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7df8dab46ec30c2e8e3e0697f0e40258029452d4
+--- /dev/null
++++ b/docs/upstream-sync/PALDEE_SYNC.md
+@@ -0,0 +1,75 @@
++# Paldee Pet 品牌与上游同步流程
++
++记录日期：2026-10-08。本仓库继续独立维护，不向小助手仓库复制源码。
++
++## 修改边界
++
++品牌名称的唯一来源是 `src-tauri/tauri.conf.json` 的 `productName`。
++`src/lib/brand.ts` 提供前端名称，设置页和页面标题读取它；托盘读取 Tauri 配置；组件打包器同样读取该字段。
++聊天原生窗口标题在同一配置中显式设置为 Paldee Pet；修改品牌时同时核对它。宠物窗口空标题保留，避免 Windows 残留标题条。
++
++保留 `com.octop.pet` 应用/凭据标识、`octoppet` 组件 ID、`octoppet-component@1` 和 `pd-chat-cli@2` 协议；独立用户数据路径保持不变。不要把远程 Octop 服务名称全部替换成 Paldee。图标本次保留；以后品牌资源放在独立目录，按打包配置接入。原作者版权、LICENSE 和上游来源不得删除。
++
++| 扩展         | 独立文件                                     | 合并时检查的已有文件                                             |
++| ------------ | -------------------------------------------- | ---------------------------------------------------------------- |
++| 品牌         | src/lib/brand.ts、本说明                     | tauri.conf.json、main.tsx、SettingsWindow.tsx、tray.rs、打包脚本 |
++| 聊天桥接     | pdChatBridge.ts、pd_bridge_cmd.rs            | useChatController.ts、tauriApi.ts、lib.rs                        |
++| 可选组件     | component_runtime.rs、scripts/_pd_component_ | Cargo.toml/lock、lib.rs、config_cmd.rs、secrets_cmd.rs           |
++| 太极眼睛动画 | mascot.css、MascotImage.test.tsx             | MascotImage.tsx                                                  |
++
++## 第一次同步前
++
++当前 origin 是自有仓库 https://github.com/xiaozs-com/OctopPet.git。尚未配置 upstream，且为浅克隆。先从原项目页面确认 **OctopPet 原仓库 URL 和默认分支**；不要把 Octop 服务端仓库或 origin 当作 Pet 上游。本次没有新增远端、联网拉取、合并或提交。
++
++以下命令在仓库目录的 PowerShell 执行；尖括号是待填内容，不能直接照抄执行。
++
++```powershell
++git status --short
++git remote -v
++git rev-parse --is-shallow-repository
++git remote add upstream <确认的-OctopPet-仓库URL>
++git fetch upstream
++```
++
++已经有 upstream 时先核对地址，不重复添加。若浅历史无法找到共同祖先，补充对应远端历史，必要时使用 `git fetch --unshallow origin` 并重新 fetch upstream；确认 `git merge-base HEAD upstream/<默认分支>` 能返回共同祖先。失败时先查清仓库来源，禁止用 `--allow-unrelated-histories` 强行合并。
++
++## 每次同步
++
++1. 先备份整个当前工作目录中的源文件和未跟踪文件，用户数据另外备份。`git diff` 不包含未跟踪文件，不能单独当完整备份。查看 `git status --short`；有未提交工作时先由维护者审查并提交，或明确保存后再继续。不要直接 reset、clean 或覆盖文件。本次工作仍未提交。
++2. 在干净工作区记录当前提交并建立恢复分支，再在同步分支操作：
++
++```powershell
++git rev-parse HEAD
++git branch backup/paldee-before-sync-<日期>
++git switch -c codex/sync-octoppet-<日期>
++git fetch upstream
++git log --oneline HEAD..upstream/<默认分支>
++git diff HEAD...upstream/<默认分支> -- src src-tauri package.json package-lock.json
++git merge --no-commit --no-ff upstream/<默认分支>
++```
++
++3. 冲突按上表逐项迁移少量接线，独立模块保留；不要整文件选择 ours/theirs。特别检查聊天创建/接收/发送连接、Tauri 命令注册、用户数据和 keyring。不要恢复桥接授权弹窗、增加公网端口或要求 SSH。保留新上游的安全修复与正常聊天行为。
++4. 检查未解决冲突，运行 Windows 等价 `make all`：
++
++```powershell
++git diff --name-only --diff-filter=U
++powershell -ExecutionPolicy Bypass -File scripts/check-windows.ps1
++git diff --check
++```
++
++5. 验证设置页名称、托盘提示、聊天、太极仅眼睛动画；按 `docs/OCTOPPET_COMPONENT.md` 构建并运行组件验收。用户数据、重复启动、停止、异常退出、中文空格路径都必须通过。Mac 手工测试需另行执行，Windows 通过不代表 Mac 通过。
++6. 更新 CHANGELOG、同步日期/上游提交/冲突位置/测试结果，审查后由维护者提交。合并回维护分支、push 和发布是单独步骤；源码同步不等于发布安装包。
++
++合并期间要放弃时用 `git merge --abort`，返回原维护分支；恢复分支留存。已结束合并后不要对有工作改动的目录执行 reset；先保存工作，再从恢复分支创建新的工作分支。
++
++## 补丁、构建产物与发布
++
++日常以 Git 合并为主，`docs/upstream-sync/snapshots/` 是应急参考。旧快照的 baseline/head 仅代表生成时点，不能盲目覆盖新上游。品牌接线涉及的文件已列在上表；最新组件补丁导出器已纳入品牌接线及版本文件。快照必须在最终修改后重新生成，不能把旧快照当作当前完整源码。组件补丁使用 `python scripts/export_pd_component_patch.py --base <明确的基线提交>` 重新生成；它不涵盖所有历史桥接和太极改动。
++
++已有 0.2.0 ZIP 是本次更名前的已验收包，不能宣称它已经显示 Paldee Pet。当前品牌版使用 0.2.2，以后构建应使用新版本，并同步 package.json、tauri.conf.json、Cargo.toml 和 Cargo.lock 根包版本，再重新计算最终 ZIP 的 size/sha256、生成未签名清单、验收和受控签名。不得覆盖已发布版本，不能沿用旧哈希/签名。对外包从 0.2.1 起改为 `paldee-pet-<version>-windows-x64.zip`，入口为 `paldee-pet.exe`，发布目录为 `/sah/components/paldee-pet/`。打包器在复制时改名，不修改 Cargo 包名。小助手更新须先按旧清单入口停止旧版本，再按新清单入口启动，不硬编码旧入口。内部 ID 不变，目录维护者应替换同 ID 的条目，避免重复。未上传，不修改全局 catalog.json 或 Cua 文件。
++
++0.2.2 增加 launchable 与默认关闭的 start_with_helper 声明；小助手调用层补丁独立保存为 snapshots/helper-pet-startup.patch。同步主程序后检查组件页异步打开、主窗口一次性启动钩子、读取已保存开关及错误提示，不向 Pet 仓库复制小助手源码。
++
++0.2.3 全 CLI 接线涉及 pdChatBridge.ts / tauriApi.ts / pd_bridge_cmd.rs；参数范围只限制固定 helper CLI 根，不列举子命令。独立桥接传输细节及服务端模块更新留在桥接仓库；服务端不修改 Octop API，已有 ws.py 补丁升级兼容性仍要检查。完整记录见 ../PALDEE_PET_FULL_CLI.md。
++
++2026-10-09 目录精简：打包器不再在 catalog-entry.json 输出 version/entry，验证改为 ZIP component.json 与 latest 清单版本及入口一致；目录只核对稳定 ID 和平台。Pet 与 Cua 分类统一为“交互增强”；Cua 的 packaging/windows/create_release_metadata.ps1 同步修改分类。本地网站全局目录重新签署，保留其他字段和条目。普通版本更新无需重生成目录；只有目录身份、分类或清单地址变化才合并并签名。已有 ZIP、latest 清单及 Cua 发布文件不改。
+diff --git a/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..83f4b9a0032ffa35e512b213918679a69b73df5c
+--- /dev/null
++++ b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
+@@ -0,0 +1,36 @@
++# Paldee Pet 0.2.1 组件验收
++
++记录日期：2026-10-08。本报告对应本地品牌版，不表示已签名、上传或发布。
++
++## 命名与兼容
++
++显示名 Paldee Pet；ZIP 为 paldee-pet-0.2.1-windows-x64.zip；入口 paldee-pet.exe；服务器目录 /www/wwwroot/xiaozs/sah/components/paldee-pet/。
++内部组件 ID octoppet、协议 octoppet-component@1、聊天桥接 pd-chat-cli@2、用户数据及 keyring 标识不变。只支持 Windows x64。
++
++## 修改文件
++
++- scripts/package_pd_component.py：新入口、ZIP 名、输出目录和 HTTPS 下载地址及目录校验。
++- scripts/test_pd_component.py：按新入口验收，仍验证元数据、架构、中文空格路径、并发和重复启动、正常停止、异常退出、超时、协议不兼容和独立数据保留。
++- package.json、package-lock.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、Cargo.lock：根包版本 0.2.1，依赖版本不变。
++- src-tauri/src/component_runtime.rs：实际验收发现同时启动时可能提前关闭管道；仅 start/status 对 EOF/断管做有总超时约束的重试，不重试其他操作；竞争实例退出码 0 时继续查询既有实例，不误报启动失败。start 请求使用同作用域 Windows 命名互斥锁，等待计入总超时，异常退出由系统释放；并发冷启动验收连续执行五轮。
++- scripts/export_pd_component_patch.py：补丁纳入品牌接线与版本文件；不操作索引、分支或远端。
++- CHANGELOG.md、组件规范说明、同步流程及历史验收提示：更新发布路径和新旧包边界。
++
++品牌来源仍为 Tauri productName；设置页、页面标题、托盘和清单共用它。原始 Cargo 产物名保留，复制进 ZIP 时改名，不给上游增加包名修改。
++
++## 发布和联调边界
++
++latest-windows-x64.json 是未签名清单，签名前留存 unsigned 副本；不得直接用于线上安装。不读取产品私钥，不生成全局 catalog.json，不覆盖 Cua 文件。目录维护者应更新原 octoppet ID 条目的清单地址，不能另造重复 ID。
++已有 0.2.0 包原样保留。更新须先按旧清单入口正常停止，再按新清单入口启动。小助手真实签名安装、更新、卸载和调用层联调仍未执行；远程 Octop 连接和屏幕操作没有在本轮重新测试。Windows 需要现有 WebView2；不宣称 x86 或 Mac 组件支持。
++
++运行报告见输出目录 runtime-acceptance.json；原生源码差异通过 Git 审查，同步步骤见 [维护流程](upstream-sync/PALDEE_SYNC.md)。
++
++## 最终产物与验证结果
++
++Windows 等价 make all 通过：前端 130 项、Rust 27 项；最终启动互斥修改后 clippy -D warnings 与 Rust 27 项复测通过。生产构建通过；真实解压包 11 项验收全部通过（41.180 秒），包括五轮并发冷启动、中文空格路径、重复启动、显隐、正常停止、异常恢复、超时、协议拒绝及整个组件目录卸载后独立用户数据保留。
++
++- `D:\ai\OctopPet\build\component-release\paldee-pet\0.2.1\paldee-pet-0.2.1-windows-x64.zip`：15378458 字节；SHA-256 `83a5c4a2f2cb3cdc35d609997af2ed4be8d4cdff69137de027dc27bdf84ceb85`。
++- `D:\ai\OctopPet\build\component-release\paldee-pet\latest-windows-x64.json`：435 字节；SHA-256 `e372de98e19e24252e4ba7642ffd0a76194285ae2d0708c035a5718c85fa3ce8`。
++- `D:\ai\OctopPet\build\component-release\paldee-pet\catalog-entry.json`：508 字节；SHA-256 `06ea920b22f9f4bd38ff326ca920a4709df3c9f66c691c2e2ad4fce2b992a6d6`。
++
++ZIP 包含实际 x64 入口、component.json、LICENSE 与桥接及运行许可文件；元数据 ID/版本/架构/入口一致，解压和 CRC 校验通过，size/sha256 来自最终 ZIP。latest 清单与 unsigned 副本完全一致。未提交、推送、签名或上传。
+diff --git a/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f3856facbc064991e775ca7e39f88928ee633a7
+--- /dev/null
++++ b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
+@@ -0,0 +1,28 @@
++# Paldee Pet 0.2.2 打开与联动启动验收
++
++2026-10-08。本轮保留 0.2.1 包及先前记录；新版本才增加打开和可选联动启动声明。
++
++设置名称：随“屏幕自动化小助手”启动。默认关闭，保存后下次启动主程序生效。仅小助手主程序启动时联动，不修改 PATH、Windows 自启动或开机任务。关闭主程序不关闭独立桌宠。不开启时不启动或下载任何组件。
++
++Pet 修改：scripts/package_pd_component.py、scripts/test_pd_component.py、根版本文件、CHANGELOG、组件及同步文档。内部标识和独立用户数据不变。
++小助手独立仓库修改前基线：43913008；记录时当前提交 ad49a8ee 已包含这四个文件的相同改动（本会话未执行 commit 或 push），不可重复应用补丁；修改 components/manager.py（传递协议）、components/operations.py（固定 JSON 生命周期调用及可选启动）、gui/main_window.py（异步打开和一次性启动钩子）、tests/test_component_application_startup.py（回归）。没有复制源码入 Pet 或复制 Pet 源码入小助手。
++
++手动“打开”执行 start/show；联动启动只执行 start。失败不会阻塞主窗口，也不会妨碍其他已开启的组件。打开使用已安装清单入口，核对 JSON 协议/版本/ID、退出码、运行状态和 PID，不运行任意 shell。
++
++小助手相关测试：30 项组件测试通过；37 项可选组件/外部目录测试完成，35 通过、2 跳过。本轮新增的 11 项启动和设置回归包含默认关闭、损坏偏好、版本/协议错误、超时、失败隔离及独立配置持久化。
++
++签名和文件准备仍在本地产品发布目录进行。没有服务器上传、源码提交、push 或主程序安装包发布。旧主程序必须更新调用层；源码小助手重启才能加载变化。远程 Octop 和业务屏幕操作不是本轮验收目标。
++
++真实界面联调发现启动/状态并发时旧管道实例可能尚被客户端持有，限制为 2 会导致创建下一监听失败并退出。运行协议改用系统默认管道实例上限，仍只保留一个待连接监听；新增十轮 start/status/status 并发验收，首实例所有权和当前用户 ACL 不变。
++
++## 最终结果与产物
++
++Windows 等价 make all 通过（前端 130、Rust 27）；并发修复后 Rust clippy 与 27 项测试复测通过。实际 ZIP 的 12 项验收全部通过（43.277 秒），包含五轮并发冷启动和十轮 start/status/status 并发。真实 Tk 组件页与实际签名安装共 10 项联调通过，实际点击“打开”和“保存配置”，验证默认关闭、保存、主程序启动钩子、隐藏窗口保持、关闭偏好及卸载保留数据。
++
++本机组件通过现有签名安装器升级为 0.2.2，用户启动偏好没有修改。源码小助手需重启加载调用层。两份 JSON 已受信任验签，Cua 保留；网站本地目录已准备，服务器未上传。
++
++- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\0.2.2\paldee-pet-0.2.2-windows-x64.zip`：15379080 字节；SHA-256 `53b1af11664c6ac609afc580f01f1ab1b5dbc761dcbe889d6d5ffa273c4643db`。
++- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\latest-windows-x64.json`：635 字节；SHA-256 `bee8b094933577a4d76373f0934243e4473fbe709f5e7b6bad475d626a9cfa61`。
++- `D:\ai\xiaozs.com\xiaozs\sah\components\catalog.json`：2067 字节；SHA-256 `043d62387dfee3c51e0334ef921b3fadea134e6212535c74e07e9ef0fb66170e`。
++
++旧 0.2.1 ZIP 和已验收记录保留。失败的未发布 0.2.2 候选包和对应签名清单仅归档到缓存/暂存备份，不能上传。当前最终签名和联调报告位于 D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.2/。Pet 构建目录中的 latest 仍是 unsigned 构建产物；上传应使用网站对应本地目录中的已签名文件。
+diff --git a/docs/PALDEE_PET_FULL_CLI.md b/docs/PALDEE_PET_FULL_CLI.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..69142e722d5951ee2a3d7abf4a4a01e3ff1a09c6
+--- /dev/null
++++ b/docs/PALDEE_PET_FULL_CLI.md
+@@ -0,0 +1,25 @@
++# Paldee Pet 0.2.3 完整 CLI 桥接
++
++2026-10-09。本轮取消服务器、Pet 前端、Tauri 和独立桥接的命令类别白名单；保留固定小助手入口、参数类型/长度、聊天会话匹配及资源限制。未来 CLI 子命令自动透传。真实错误由本机 CLI 返回，不替换为“超出桥接支持范围”。
++
++新增可选标准输入及文件包，仍用原 pd-chat-cli@2 / WS/WSS；有 IO 的方法为 helper.cli.io，避免旧客户端静默丢失输入。没有改 Octop ws.py 格式、服务地址、端口、Agent 或 Skill 格式。包格式仍遵循原外部组件规范，ID octoppet、入口 paldee-pet.exe、协议 octoppet-component@1 不变。
++
++修正旧连接八次已完成调用后静默拒绝：最多八个并行操作，完成结果保留 128 项去重缓存。顺序连续操作不受八次限制。
++
++Pet 修改：src/lib/pdChatBridge.ts、pdChatBridge.test.ts、tauriApi.ts、src-tauri/src/pd_bridge_cmd.rs、根版本/锁文件、文档与源码补丁。独立桥接修改：native/src/lib.rs、main.rs、新增 transfer.rs；server/pd_chat_bridge.py、pd_cli_proxy.py及测试、README、升级说明和独立服务器包脚本。桥接源码留在 D:/ai/screen-automation-device-bridge，不复制入小助手或 Pet 运行源码。
++
++流程安装/检查时服务器目录自动上传；既有本机流程用 workflow show 获得目录，再 --pd-download 取回源码。输入 *-file 参数自动传文件，其他输入用 --pd-upload INDEX=PATH；标准输入 UTF-8 透传。单次文本最多 1 MiB、文件最多 128 个/4 MiB；成功副本保存在独立用户目录 bridge-transfers，供异步操作继续使用，卸载组件保留。
++
++具体用法见独立桥接 FULL_CLI_USAGE.md；服务器更新见 SERVER_UPGRADE.md。上传后使用 /home/admin/.octop/venv/bin/python update_bridge.py 预览，停止原服务后加 --apply 更新，再按原方式启动并重新聊天。仅更新已有模块，不重打 Octop 补丁。两个端点都需本轮版本；未上传前不能声称远端已经完整支持。
++
++签名在本地受控产品目录使用原密钥；本仓库继续生成未签名版本清单及自身目录条目，不生成全局 catalog.json，不改 Cua 或产品签名私钥。旧版本 ZIP 保留。小助手启动设置及眼睛动画保留。
++
++## 最终验证与交付
++
++Windows `scripts/check-windows.ps1` 全绿：前端 140 项、Pet Rust 27 项；独立桥接 Rust 6 项、服务器与真实 CLI 18 项、最终 ZIP 生命周期验收 12 项通过。真实 CLI 验证包含流程 schema/inspect/install/show/validate、流程源码取回和中文标准输入写入/读取。ZIP 验证包含中文及空格路径、重复启动、正常停止、异常退出、独立用户数据保留。
++
++最终 Windows ZIP：15,426,748 字节，SHA-256 `5a8f39c78465c4660634db40217e07d0be3e7bfd5a7aa0f52a9b40b82be9781c`。
++
++服务器更新 ZIP：12,155 字节，SHA-256 `a78a94c0fe367be13992d79132a3c3368c1ed227d3d4cf805d13078ccfd6d9ff`。
++
++本地网站待上传文件在 `D:/ai/xiaozs.com/xiaozs/sah/components`，签名与哈希报告在 `D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.3/signing-verification.json`。已验证产品签名并保留 Cua 原条目；未上传、未 push。服务器安装和真实宠物到远端 Octop 的联调仍待手动部署；现有已安装的旧 Pet 不会因本地构建自动升级。
+diff --git a/src-tauri/src/component_runtime.rs b/src-tauri/src/component_runtime.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..60e50aa27f39b9aa7c3784840ea5412eb3fb00d0
+--- /dev/null
++++ b/src-tauri/src/component_runtime.rs
+@@ -0,0 +1,663 @@
++//! Windows-only, current-user lifecycle control; independent of chat/CLI transport.
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::{
++    io,
++    os::windows::{io::AsRawHandle, process::CommandExt},
++    path::PathBuf,
++    process::{Command, Stdio},
++    ptr,
++    sync::mpsc,
++    time::{Duration, Instant},
++};
++use tauri::Manager;
++use tokio::{
++    io::{AsyncReadExt, AsyncWriteExt},
++    net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions},
++    runtime::{Builder, Runtime},
++    time::{sleep, timeout},
++};
++use windows_sys::Win32::{
++    Foundation::{
++        CloseHandle, GetHandleInformation, LocalFree, SetHandleInformation, HANDLE,
++        HANDLE_FLAG_INHERIT, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
++    },
++    Security::{
++        Authorization::{
++            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
++        },
++        GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
++    },
++    System::{
++        Console::{
++            AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
++            STD_OUTPUT_HANDLE,
++        },
++        Pipes::GetNamedPipeServerProcessId,
++        RemoteDesktop::ProcessIdToSessionId,
++        Threading::{
++            CreateMutexW, GetCurrentProcess, OpenProcess, OpenProcessToken, ReleaseMutex,
++            WaitForSingleObject, PROCESS_SYNCHRONIZE,
++        },
++    },
++};
++
++pub const PROTOCOL: &str = "octoppet-component@1";
++const VERSION: &str = env!("CARGO_PKG_VERSION");
++const MAX_FRAME: usize = 8192;
++
++#[derive(Debug, Serialize, Deserialize)]
++struct Request {
++    protocol: String,
++    command: String,
++}
++
++fn response(command: &str, running: bool, visible: bool) -> Value {
++    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":true,
++        "command":command,"running":running,"visible":visible,
++        "pid":if running {Some(std::process::id())} else {None},"error":null,
++        "data_dir":data_dir().ok(),
++        "control_pipe":current_sid().ok().and_then(|sid| pipe_name(&sid).ok())})
++}
++
++fn failure(command: &str, code: &str, message: impl ToString) -> Value {
++    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":false,
++        "command":command,"error":{"code":code,"message":message.to_string()}})
++}
++
++fn command_valid(command: &str) -> bool {
++    matches!(command, "status" | "start" | "stop" | "show" | "hide")
++}
++
++pub fn data_dir() -> Result<PathBuf, String> {
++    let path = std::env::var_os("OCTOPPET_DATA_DIR")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("com.octop.pet")))
++        .ok_or("APPDATA is unavailable")?;
++    if !path.is_absolute() {
++        return Err("user data directory must be absolute".into());
++    }
++    // Resolve existing ancestors before creating anything, including symlink targets.
++    let mut ancestor = path;
++    let mut suffix = Vec::new();
++    while !ancestor.exists() {
++        suffix.push(
++            ancestor
++                .file_name()
++                .ok_or("invalid user data path")?
++                .to_os_string(),
++        );
++        if !ancestor.pop() {
++            return Err("invalid user data path".into());
++        }
++    }
++    let mut path = ancestor.canonicalize().map_err(|e| e.to_string())?;
++    for name in suffix.into_iter().rev() {
++        path.push(name);
++    }
++    let exe_dir = std::env::current_exe()
++        .map_err(|e| e.to_string())?
++        .parent()
++        .ok_or("executable directory is unavailable")?
++        .canonicalize()
++        .map_err(|e| e.to_string())?;
++    let managed_root = exe_dir
++        .parent()
++        .filter(|p| {
++            p.file_name()
++                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("versions"))
++        })
++        .and_then(|p| p.parent())
++        .unwrap_or(&exe_dir);
++    if path.starts_with(managed_root) || managed_root.starts_with(&path) {
++        return Err("user data must be outside the component directory".into());
++    }
++    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
++    Ok(path)
++}
++
++fn current_sid() -> io::Result<String> {
++    unsafe {
++        let mut token: HANDLE = ptr::null_mut();
++        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let mut size = 0;
++        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut size);
++        // TOKEN_USER contains pointers; the allocation must have pointer alignment.
++        let mut buffer = vec![0usize; (size as usize).div_ceil(size_of::<usize>())];
++        let ok = GetTokenInformation(
++            token,
++            TokenUser,
++            buffer.as_mut_ptr().cast(),
++            size,
++            &mut size,
++        );
++        CloseHandle(token);
++        if ok == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
++        let mut text = ptr::null_mut();
++        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let mut len = 0;
++        while *text.add(len) != 0 {
++            len += 1;
++        }
++        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
++        LocalFree(text.cast());
++        Ok(sid)
++    }
++}
++
++fn pipe_name(sid: &str) -> Result<String, String> {
++    // Fixed FNV-1a scope hash; Rust's DefaultHasher is not stable across releases.
++    let mut hash = 0xcbf29ce484222325u64;
++    for byte in data_dir()?.to_string_lossy().to_lowercase().as_bytes() {
++        hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
++    }
++    let mut session = 0;
++    unsafe {
++        if ProcessIdToSessionId(std::process::id(), &mut session) == 0 {
++            return Err(io::Error::last_os_error().to_string());
++        }
++    }
++    let mode = if cfg!(debug_assertions) {
++        "dev"
++    } else {
++        "release"
++    };
++    Ok(format!(
++        r"\\.\pipe\octoppet-{sid}-{session}-{mode}-{:x}",
++        hash
++    ))
++}
++
++fn create_pipe(name: &str, sid: &str, first: bool) -> io::Result<NamedPipeServer> {
++    // Explicit current-user ACL; no Everyone/anonymous or remote access.
++    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})\0").encode_utf16().collect();
++    unsafe {
++        let mut descriptor = ptr::null_mut();
++        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
++            sddl.as_ptr(),
++            1,
++            &mut descriptor,
++            ptr::null_mut(),
++        ) == 0
++        {
++            return Err(io::Error::last_os_error());
++        }
++        let mut attributes = SECURITY_ATTRIBUTES {
++            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
++            lpSecurityDescriptor: descriptor,
++            bInheritHandle: 0,
++        };
++        let pipe = ServerOptions::new()
++            .first_pipe_instance(first)
++            .reject_remote_clients(true)
++            // Clients may briefly retain a disconnected instance after acknowledging.
++            // Use the default limit while keeping only one pending server listener.
++            .create_with_security_attributes_raw(
++                name,
++                (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
++            );
++        LocalFree(descriptor);
++        pipe
++    }
++}
++
++fn runtime() -> Runtime {
++    Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .expect("component runtime")
++}
++
++async fn read_frame<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<Vec<u8>> {
++    let len = stream.read_u32_le().await? as usize;
++    if len == 0 || len > MAX_FRAME {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "invalid frame size",
++        ));
++    }
++    let mut frame = vec![0; len];
++    stream.read_exact(&mut frame).await?;
++    Ok(frame)
++}
++
++async fn write_frame<W: AsyncWriteExt + Unpin>(stream: &mut W, value: &Value) -> io::Result<()> {
++    let frame = serde_json::to_vec(value)?;
++    if frame.len() > MAX_FRAME {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "response too large",
++        ));
++    }
++    stream.write_u32_le(frame.len() as u32).await?;
++    stream.write_all(&frame).await
++}
++
++async fn rpc(name: &str, command: &str) -> io::Result<Value> {
++    let mut client = loop {
++        match ClientOptions::new().open(name) {
++            Ok(client) => break client,
++            Err(e) if e.raw_os_error() == Some(231) => sleep(Duration::from_millis(25)).await,
++            Err(e) => return Err(e),
++        }
++    };
++    write_frame(&mut client, &json!({"protocol":PROTOCOL,"command":command})).await?;
++    let value: Value = serde_json::from_slice(&read_frame(&mut client).await?)?;
++    let mut server_pid = 0;
++    if unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut server_pid) } == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    if value["protocol"] != PROTOCOL || value["id"] != "octoppet" {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "incompatible response",
++        ));
++    }
++    if value["running"] == true && value["pid"].as_u64() != Some(server_pid as u64) {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "process identity mismatch",
++        ));
++    }
++    // Keep the server connected until its entire reply has been consumed.
++    client.write_u8(1).await?;
++    Ok(value)
++}
++
++// Startup can briefly close a connection before the GUI event loop is ready.
++// Retry only idempotent probes; the caller's total deadline still bounds this loop.
++async fn startup_rpc(name: &str, command: &str) -> io::Result<Value> {
++    loop {
++        match rpc(name, command).await {
++            Err(e)
++                if matches!(command, "start" | "status")
++                    && matches!(
++                        e.kind(),
++                        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
++                    ) =>
++            {
++                sleep(Duration::from_millis(25)).await;
++            }
++            result => return result,
++        }
++    }
++}
++
++fn process_running(pid: u32) -> bool {
++    unsafe {
++        let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
++        if process.is_null() {
++            return false;
++        }
++        let running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
++        CloseHandle(process);
++        running
++    }
++}
++
++async fn control(name: &str, command: &str) -> io::Result<Value> {
++    match startup_rpc(name, command).await {
++        Ok(mut value) => {
++            if command == "stop" && value["ok"] == true {
++                if let Some(pid) = value["pid"].as_u64() {
++                    while process_running(pid as u32) {
++                        sleep(Duration::from_millis(25)).await;
++                    }
++                }
++                value["running"] = false.into();
++                value["visible"] = false.into();
++                value["pid"] = Value::Null;
++            }
++            Ok(value)
++        }
++        Err(e) if e.kind() == io::ErrorKind::NotFound => {
++            if matches!(command, "status" | "stop") {
++                return Ok(response(command, false, false));
++            }
++            if command != "start" {
++                return Ok(failure(command, "NOT_RUNNING", "start the component first"));
++            }
++            let mut child = spawn_host()?;
++            loop {
++                match startup_rpc(name, "start").await {
++                    Ok(value) => return Ok(value),
++                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
++                    Err(e) => return Err(e),
++                }
++                if let Some(status) = child.try_wait()? {
++                    // A competing host exits successfully after finding the existing owner.
++                    // Keep probing that owner instead of reporting a failed launch.
++                    if !status.success() {
++                        return Ok(failure(
++                            command,
++                            "START_FAILED",
++                            format!("host exited: {status}"),
++                        ));
++                    }
++                }
++                sleep(Duration::from_millis(50)).await;
++            }
++        }
++        Err(e) => Err(e),
++    }
++}
++
++struct StartLock(HANDLE);
++
++impl StartLock {
++    fn acquire(pipe_name: &str, milliseconds: u32) -> io::Result<Self> {
++        let name: Vec<u16> = format!("Local\\{}-start", pipe_name.replace('\\', "_"))
++            .encode_utf16()
++            .chain(Some(0))
++            .collect();
++        unsafe {
++            let handle = CreateMutexW(ptr::null(), 0, name.as_ptr());
++            if handle.is_null() {
++                return Err(io::Error::last_os_error());
++            }
++            match WaitForSingleObject(handle, milliseconds) {
++                WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
++                result => {
++                    let error = if result == WAIT_TIMEOUT {
++                        io::Error::new(
++                            io::ErrorKind::TimedOut,
++                            "another start is still in progress",
++                        )
++                    } else {
++                        io::Error::last_os_error()
++                    };
++                    CloseHandle(handle);
++                    Err(error)
++                }
++            }
++        }
++    }
++}
++
++impl Drop for StartLock {
++    fn drop(&mut self) {
++        unsafe {
++            ReleaseMutex(self.0);
++            CloseHandle(self.0);
++        }
++    }
++}
++
++fn spawn_host() -> io::Result<std::process::Child> {
++    // Giving the child NUL stdio alone does not exclude other inherited pipe handles.
++    // A lingering capture handle would make the controller wait until the GUI exits.
++    let mut inherited = Vec::new();
++    unsafe {
++        for kind in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
++            let handle = GetStdHandle(kind);
++            let mut flags = 0;
++            if GetHandleInformation(handle, &mut flags) != 0 && flags & HANDLE_FLAG_INHERIT != 0 {
++                if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) == 0 {
++                    return Err(io::Error::last_os_error());
++                }
++                inherited.push((handle, flags));
++            }
++        }
++    }
++    let result = (|| {
++        Command::new(std::env::current_exe()?)
++            .arg("--component-host")
++            .current_dir(data_dir().map_err(io::Error::other)?)
++            .stdin(Stdio::null())
++            .stdout(Stdio::null())
++            .stderr(Stdio::null())
++            .creation_flags(0x08000000)
++            .spawn()
++    })();
++    for (handle, flags) in inherited {
++        unsafe {
++            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags & HANDLE_FLAG_INHERIT);
++        }
++    }
++    result
++}
++
++fn print_result(value: Value) -> ! {
++    let code = if value["ok"] == true {
++        0
++    } else {
++        match value["error"]["code"].as_str() {
++            Some("INVALID_ARGUMENT") => 2,
++            Some("UNSUPPORTED_PROTOCOL") => 3,
++            Some("NOT_RUNNING") => 4,
++            Some("TIMEOUT") => 5,
++            Some("START_FAILED") => 6,
++            Some("WINDOW_ERROR") => 9,
++            _ => 8,
++        }
++    };
++    println!("{value}");
++    std::process::exit(code)
++}
++
++pub struct Host {
++    runtime: Runtime,
++    pipe: NamedPipeServer,
++    name: String,
++    sid: String,
++}
++
++/// Called before Tauri creates any windows; the first pipe instance is the owner lock.
++pub fn entry() -> Host {
++    let args: Vec<String> = std::env::args().skip(1).collect();
++    let sid = current_sid().unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
++    let name = pipe_name(&sid).unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
++    let runtime = runtime();
++    if !args.is_empty() && args != ["--component-host"] {
++        // GUI builds have no console by default; preserve redirected handles from callers.
++        unsafe {
++            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
++            if stdout.is_null() || stdout == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
++                AttachConsole(ATTACH_PARENT_PROCESS);
++            }
++        }
++        let command = args.first().map(String::as_str).unwrap_or("");
++        let mut milliseconds = 15000;
++        let valid = command_valid(command)
++            && args.get(1).map(String::as_str) == Some("--json")
++            && (args.len() == 2
++                || (args.len() == 4
++                    && args[2] == "--timeout-ms"
++                    && args[3].parse::<u64>().is_ok_and(|n| {
++                        milliseconds = n;
++                        (100..=15000).contains(&n)
++                    })));
++        if !valid {
++            print_result(failure(
++                command,
++                "INVALID_ARGUMENT",
++                "expected command --json [--timeout-ms 100..15000]",
++            ));
++        }
++        let deadline = Instant::now() + Duration::from_millis(milliseconds);
++        let start_lock = if command == "start" {
++            Some(
++                StartLock::acquire(&name, milliseconds as u32).unwrap_or_else(|e| {
++                    let code = if e.kind() == io::ErrorKind::TimedOut {
++                        "TIMEOUT"
++                    } else {
++                        "IO_ERROR"
++                    };
++                    print_result(failure(command, code, e))
++                }),
++            )
++        } else {
++            None
++        };
++        let value = runtime.block_on(async {
++            timeout(
++                deadline.saturating_duration_since(Instant::now()),
++                control(&name, command),
++            )
++            .await
++        });
++        drop(start_lock);
++        print_result(match value {
++            Ok(Ok(value)) => value,
++            Ok(Err(e)) => failure(command, "IO_ERROR", e),
++            Err(_) => failure(
++                command,
++                "TIMEOUT",
++                "operation exceeded its deadline; inspect status before retry",
++            ),
++        });
++    }
++    let pipe = {
++        let _guard = runtime.enter();
++        match create_pipe(&name, &sid, true) {
++            Ok(pipe) => pipe,
++            Err(_) => {
++                // A direct repeat launch is a no-op, never opens a second UI or steals focus.
++                let result = runtime.block_on(async {
++                    timeout(Duration::from_secs(15), startup_rpc(&name, "status")).await
++                });
++                if matches!(result, Ok(Ok(ref value)) if value["ok"] == true) {
++                    std::process::exit(0);
++                }
++                print_result(failure(
++                    "start",
++                    "IO_ERROR",
++                    "unable to own the component pipe",
++                ));
++            }
++        }
++    };
++    Host {
++        runtime,
++        pipe,
++        name,
++        sid,
++    }
++}
++
++fn dispatch(app: &tauri::AppHandle, request: Request) -> Value {
++    if request.protocol != PROTOCOL {
++        return failure(
++            &request.command,
++            "UNSUPPORTED_PROTOCOL",
++            "expected octoppet-component@1",
++        );
++    }
++    if !command_valid(&request.command) {
++        return failure(
++            &request.command,
++            "INVALID_ARGUMENT",
++            "unknown lifecycle command",
++        );
++    }
++    let Some(pet) = app.get_webview_window("pet") else {
++        return failure(
++            &request.command,
++            "WINDOW_ERROR",
++            "pet window is unavailable",
++        );
++    };
++    let operation = match request.command.as_str() {
++        "show" => pet.show(),
++        "hide" => {
++            for label in ["chat", "settings"] {
++                if let Some(window) = app.get_webview_window(label) {
++                    let _ = window.hide();
++                }
++            }
++            pet.hide()
++        }
++        _ => Ok(()),
++    };
++    match operation {
++        Ok(()) => response(&request.command, true, pet.is_visible().unwrap_or(false)),
++        Err(e) => failure(&request.command, "WINDOW_ERROR", e),
++    }
++}
++
++impl Host {
++    pub fn serve(self, app: tauri::AppHandle) {
++        std::thread::spawn(move || {
++            self.runtime.block_on(async move {
++                let mut pipe = self.pipe;
++                loop {
++                    let connected = pipe.connect().await;
++                    // Keep a fresh listener alive before releasing the previous instance.
++                    // Reusing a disconnected overlapped pipe can retain stale read readiness.
++                    let next = match create_pipe(&self.name, &self.sid, false) {
++                        Ok(next) => next,
++                        Err(_) => {
++                            app.exit(8);
++                            break;
++                        }
++                    };
++                    if connected.is_err() {
++                        let _ = pipe.disconnect();
++                        pipe = next;
++                        continue;
++                    }
++                    let result = timeout(Duration::from_secs(3), async {
++                        let request: Request =
++                            serde_json::from_slice(&read_frame(&mut pipe).await?)?;
++                        let (send, receive) = mpsc::sync_channel(1);
++                        let handle = app.clone();
++                        app.run_on_main_thread(move || {
++                            let _ = send.send(dispatch(&handle, request));
++                        })
++                        .map_err(io::Error::other)?;
++                        let value = receive
++                            .recv_timeout(Duration::from_secs(2))
++                            .map_err(io::Error::other)?;
++                        write_frame(&mut pipe, &value).await?;
++                        let _ = pipe.read_u8().await?;
++                        Ok::<bool, io::Error>(value["ok"] == true && value["command"] == "stop")
++                    })
++                    .await;
++                    let _ = pipe.disconnect();
++                    pipe = next;
++                    if matches!(result, Ok(Ok(true))) {
++                        app.exit(0);
++                        break;
++                    }
++                }
++            })
++        });
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn only_lifecycle_commands_are_accepted() {
++        for command in ["status", "start", "stop", "show", "hide"] {
++            assert!(command_valid(command));
++        }
++        for command in ["exec", "shell", "window activate", ""] {
++            assert!(!command_valid(command));
++        }
++    }
++
++    #[test]
++    fn stopped_status_has_no_process_id() {
++        let value = response("status", false, false);
++        assert_eq!(value["protocol"], PROTOCOL);
++        assert_eq!(value["id"], "octoppet");
++        assert!(value["pid"].is_null());
++    }
++
++    #[test]
++    fn failure_is_structured() {
++        let value = failure("show", "NOT_RUNNING", "start first");
++        assert_eq!(value["ok"], false);
++        assert_eq!(value["error"]["code"], "NOT_RUNNING");
++    }
++}
+diff --git a/scripts/build_pd_component.ps1 b/scripts/build_pd_component.ps1
+new file mode 100644
+index 0000000000000000000000000000000000000000..70d527c7c42e66c0f93200de4e73384791836baa
+--- /dev/null
++++ b/scripts/build_pd_component.ps1
+@@ -0,0 +1,28 @@
++# Local Windows x64 component build. No installation, keys, catalog merge or upload.
++param(
++    [Parameter(Mandatory=$true)][string]$BridgeRoot,
++    [string]$OutputDirectory = ""
++)
++$ErrorActionPreference = 'Stop'
++Set-Location (Split-Path -Parent $PSScriptRoot)
++function Invoke-Checked([string]$Program, [string[]]$Arguments) {
++    & $Program @Arguments
++    if ($LASTEXITCODE -ne 0) { throw "$Program failed: $LASTEXITCODE" }
++}
++if (-not [Environment]::Is64BitOperatingSystem) { throw 'Windows x64 is required' }
++Invoke-Checked npm.cmd @('run', 'tauri', '--', 'build', '--no-bundle', '--target', 'x86_64-pc-windows-msvc')
++$componentRustFlags = $env:RUSTFLAGS
++try {
++    $env:RUSTFLAGS = (($componentRustFlags + ' -C target-feature=+crt-static').Trim())
++    Invoke-Checked cargo @('build', '--release', '--offline', '--locked', '--target', 'x86_64-pc-windows-msvc', '--manifest-path', (Join-Path $BridgeRoot 'native/Cargo.toml'))
++} finally {
++    $env:RUSTFLAGS = $componentRustFlags
++}
++$packageArguments = @(
++    'scripts/package_pd_component.py',
++    '--pet', 'src-tauri/target/x86_64-pc-windows-msvc/release/octop-pet.exe',
++    '--bridge', (Join-Path $BridgeRoot 'native/target/x86_64-pc-windows-msvc/release/pd-device-bridge.exe'),
++    '--bridge-root', $BridgeRoot
++)
++if ($OutputDirectory) { $packageArguments += @('--output', $OutputDirectory) }
++Invoke-Checked python $packageArguments
+diff --git a/scripts/package_pd_component.py b/scripts/package_pd_component.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..ee7041fd4648fd083d3ad2fa1e92b5611e3de6b3
+--- /dev/null
++++ b/scripts/package_pd_component.py
+@@ -0,0 +1,226 @@
++"""Package OctopPet with UNSIGNED manifests. No private keys, global catalogs or uploads."""
++from __future__ import annotations
++import argparse
++import hashlib
++import json
++import os
++import re
++import shutil
++import struct
++import subprocess
++import tempfile
++import zipfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++ID = "octoppet"
++PLATFORM = "windows-x64"
++ENTRY = "paldee-pet.exe"
++PROTOCOL = "octoppet-component@1"
++
++def write_json(path, value):
++    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++
++def pe_machine(path):
++    with path.open("rb") as file:
++        header = file.read(64)
++        if len(header) != 64 or header[:2] != b"MZ":
++            raise ValueError(f"Not a PE executable: {path}")
++        file.seek(struct.unpack_from("<I", header, 60)[0])
++        pe = file.read(6)
++        if len(pe) != 6 or pe[:4] != b"PE\0\0":
++            raise ValueError(f"Invalid PE signature: {path}")
++        return struct.unpack_from("<H", pe, 4)[0]
++
++def pe_imports(path):
++    data = path.read_bytes()
++    pe = struct.unpack_from("<I", data, 60)[0]
++    sections = struct.unpack_from("<H", data, pe + 6)[0]
++    optional = pe + 24
++    optional_size = struct.unpack_from("<H", data, pe + 20)[0]
++    imports_rva = struct.unpack_from("<I", data, optional + 120)[0]
++    def offset(rva):
++        for index in range(sections):
++            start = optional + optional_size + 40 * index
++            virtual_size, address, raw_size, raw = struct.unpack_from("<IIII", data, start + 8)
++            if address <= rva < address + max(virtual_size, raw_size):
++                return raw + rva - address
++        raise ValueError("Invalid PE import address")
++    position = offset(imports_rva)
++    names = []
++    while any(data[position:position + 20]):
++        start = offset(struct.unpack_from("<I", data, position + 12)[0])
++        names.append(data[start:data.index(b"\0", start)].decode("ascii").lower())
++        position += 20
++    system = {"kernel32.dll", "advapi32.dll", "oleaut32.dll", "bcryptprimitives.dll", "ntdll.dll",
++              "user32.dll", "shell32.dll", "comctl32.dll", "ole32.dll", "gdi32.dll", "dwmapi.dll",
++              "shlwapi.dll", "ws2_32.dll", "bcrypt.dll"}
++    if any(name not in system and not name.startswith("api-ms-win-") for name in names):
++        raise ValueError(f"Unbundled non-system DLL dependency: {path.name}: {names}")
++    return names
++
++def collect_licenses(destination, bridge_root):
++    records, missing, seen = [], [], set()
++    legal_root = ROOT / "packaging/third-party-licenses"
++    sources = json.loads((legal_root / "SOURCES.json").read_text(encoding="utf-8"))
++    def collect(name, version, root, license_id, extra=""):
++        files = sorted(p for p in root.iterdir() if p.is_file() and
++                       p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE")))
++        if extra and (root / extra).is_file() and (root / extra) not in files:
++            files.append(root / extra)
++        if not files:
++            key = name.removeprefix("rust-") + "-" + version
++            if name.startswith("rust-unic-") and version == "0.9.0":
++                key = "unic-0.9.0"
++            if name in ["rust-webview2-com", "rust-webview2-com-sys"] and version == "0.38.2":
++                key = "webview2-0.38.2"
++            if name == "rust-webview2-com-macros" and version == "0.8.1":
++                key = "webview2-macros-0.8.1"
++            for record in sources.get(key, []):
++                path = legal_root / record["file"]
++                if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
++                    raise ValueError(f"Pinned license fingerprint mismatch: {path}")
++                files.append(path)
++        if not files:
++            missing.append(f"{name}@{version}: {license_id}")
++            return
++        target = destination / re.sub(r"[^a-zA-Z0-9._-]", "_", f"{name}-{version}")
++        target.mkdir(parents=True, exist_ok=True)
++        for file in files:
++            shutil.copy2(file, target / file.name)
++        source = (f"https://crates.io/api/v1/crates/{name.removeprefix('rust-')}/{version}/download"
++                  if name.startswith("rust-") else f"https://www.npmjs.com/package/{name.removeprefix('npm-')}/v/{version}")
++        records.append({"name": name, "version": version, "license": license_id, "source": source})
++    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
++    for name, info in lock["packages"].items():
++        if not name or info.get("dev"):
++            continue
++        root = ROOT / name
++        package = json.loads((root / "package.json").read_text(encoding="utf-8"))
++        collect("npm-" + package["name"], package["version"], root, str(package.get("license", "")))
++    for manifest in [ROOT / "src-tauri/Cargo.toml", bridge_root / "native/Cargo.toml"]:
++        metadata = json.loads(subprocess.check_output([
++            "cargo", "metadata", "--offline", "--locked", "--format-version", "1",
++            "--filter-platform", "x86_64-pc-windows-msvc", "--manifest-path", str(manifest),
++        ], text=True))
++        resolved = {node["id"] for node in metadata["resolve"]["nodes"]}
++        for package in metadata["packages"]:
++            if package["id"] not in resolved or package["source"] is None or package["id"] in seen:
++                continue
++            seen.add(package["id"])
++            collect("rust-" + package["name"], package["version"],
++                    Path(package["manifest_path"]).parent, package.get("license") or "",
++                    package.get("license_file") or "")
++    if missing:
++        raise ValueError("Missing dependency license texts:\n" + "\n".join(missing))
++    write_json(destination / "THIRD_PARTY_NOTICES.json", {"dependencies": records})
++    shutil.copy2(legal_root / "SOURCES.json", destination / "PINNED_LICENSE_SOURCES.json")
++
++def validate_archive(archive, manifest, catalog):
++    if archive.stat().st_size != manifest["size"]:
++        raise ValueError("ZIP byte size mismatch")
++    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
++    if digest != manifest["sha256"]:
++        raise ValueError("ZIP SHA-256 mismatch")
++    with zipfile.ZipFile(archive) as bundle:
++        if bundle.testzip() is not None:
++            raise ValueError("ZIP integrity failed")
++        for name in bundle.namelist():
++            if name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/") or ":" in name:
++                raise ValueError("Unsafe ZIP path")
++        metadata = json.loads(bundle.read("component.json"))
++        if not (metadata["id"] == manifest["id"] == catalog["id"] == ID and
++                metadata["version"] == manifest["version"] and
++                metadata["entry"] == manifest["entry"] == ENTRY and
++                metadata["supported_runtime_platforms"] == [manifest["platform"]] == [PLATFORM] and
++                list(catalog["manifests"]) == [PLATFORM] and metadata["protocol"] == PROTOCOL):
++            raise ValueError("Component metadata mismatch")
++        if "signature" in catalog or "components" in catalog:
++            raise ValueError("Only an unsigned single-component catalog entry is allowed")
++        if not {"LICENSE", ENTRY, "pd-device-bridge.exe"}.issubset(bundle.namelist()):
++            raise ValueError("Entry, bridge or license missing")
++        with tempfile.TemporaryDirectory(prefix="octoppet-zip-check-") as temporary:
++            bundle.extractall(temporary)
++            for name in [ENTRY, "pd-device-bridge.exe"]:
++                if pe_machine(Path(temporary) / name) != 0x8664:
++                    raise ValueError("Incorrect executable architecture")
++    return {"id": ID, "version": manifest["version"], "platform": PLATFORM,
++            "entry": ENTRY, "size": manifest["size"], "sha256": digest, "signature": "pending"}
++
++def package(args):
++    version = args.version
++    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
++        raise ValueError("Version must be x.y.z")
++    base = args.base_url.rstrip("/")
++    if not base.startswith("https://") or not base.endswith("/paldee-pet"):
++        raise ValueError("Base URL must be an HTTPS paldee-pet directory")
++    for path in [args.pet, args.bridge]:
++        if pe_machine(path) != 0x8664:
++            raise ValueError(f"Only Windows x64 is supported: {path}")
++        pe_imports(path)
++    if not (args.bridge_root / "LICENSE").is_file():
++        raise ValueError("Bridge license is required")
++    with tempfile.TemporaryDirectory(prefix="octoppet-version-check-") as temporary:
++        env = dict(os.environ, OCTOPPET_DATA_DIR=temporary)
++        result = subprocess.run([str(args.pet.resolve()), "status", "--json"],
++                                capture_output=True, text=True, encoding="utf-8", env=env, timeout=20, check=True)
++        status = json.loads(result.stdout)
++        if status.get("protocol") != PROTOCOL or status.get("version") != version:
++            raise ValueError("Executable version/protocol does not match")
++    output = args.output.resolve()
++    archive = output / version / f"paldee-pet-{version}-{PLATFORM}.zip"
++    if archive.exists():
++        raise FileExistsError("Immutable version already exists; use a new version or separate output")
++    archive.parent.mkdir(parents=True, exist_ok=True)
++    metadata = {"id": ID, "name": json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["productName"], "version": version,
++                "protocol": PROTOCOL, "capabilities": ["desktop.pet@1", "desktop.helper-cli@2"],
++                "supported_runtime_platforms": [PLATFORM], "entry": ENTRY, "launchable": True,
++                "settings": [{"key": "start_with_helper", "name": "随“屏幕自动化小助手”启动",
++                              "description": "默认关闭。保存后，下次启动屏幕自动化小助手时启动桌宠；不设置 Windows 系统自启动。",
++                              "value_type": "boolean", "default": False, "restart_required": False}],
++                "retains_user_data_on_uninstall": True}
++    with tempfile.TemporaryDirectory(prefix="octoppet-package-") as temporary:
++        staging = Path(temporary)
++        shutil.copy2(args.pet, staging / ENTRY)
++        shutil.copy2(args.bridge, staging / "pd-device-bridge.exe")
++        shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
++        write_json(staging / "component.json", metadata)
++        legal = staging / "licenses"
++        legal.mkdir()
++        shutil.copy2(args.bridge_root / "LICENSE", legal / "PD_BRIDGE_LICENSE.txt")
++        collect_licenses(legal, args.bridge_root)
++        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
++            for path in sorted(staging.rglob("*")):
++                if path.is_file():
++                    info = zipfile.ZipInfo(path.relative_to(staging).as_posix(), (2026, 1, 1, 0, 0, 0))
++                    bundle.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
++    manifest = {"id": ID, "version": version, "platform": PLATFORM,
++                "download_url": f"{base}/{version}/{archive.name}",
++                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "size": archive.stat().st_size,
++                "entry": ENTRY, "license": "MIT", "source": "https://github.com/xiaozs-com/OctopPet",
++                "minimum_helper_version": "1.2.6"}
++    catalog = {"id": ID, "name": metadata["name"], "category": "交互增强",
++               "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机 PD 小助手 CLI。",
++               "supported_platforms": ["win32"], "manifests": {PLATFORM: f"{base}/latest-{PLATFORM}.json"},
++               "required_capabilities": [], "acquisition": "free", "retains_user_data_on_uninstall": True}
++    write_json(output / f"latest-{PLATFORM}.unsigned.json", manifest)
++    write_json(output / f"latest-{PLATFORM}.json", manifest)
++    write_json(output / "catalog-entry.json", catalog)
++    write_json(output / "package-validation.json", validate_archive(archive, manifest, catalog))
++    (output / "UNSIGNED_MANIFEST.txt").write_text(
++        "latest-windows-x64.json is UNSIGNED. Sign it in the controlled release environment before uploading.\n"
++        "No private keys or global catalog.json are read, generated, merged or uploaded by this repository.\n", encoding="utf-8")
++    return archive
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--version", default=json.loads((ROOT / "package.json").read_text())["version"])
++    parser.add_argument("--pet", type=Path, required=True)
++    parser.add_argument("--bridge", type=Path, required=True)
++    parser.add_argument("--bridge-root", type=Path, required=True)
++    parser.add_argument("--output", type=Path, default=ROOT / "build/component-release/paldee-pet")
++    parser.add_argument("--base-url", default="https://www.xiaozs.com/sah/components/paldee-pet")
++    print(package(parser.parse_args()))
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/test_pd_component.py b/scripts/test_pd_component.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..99b3c3cb69e6f042ebc3784f9c986bc1d2b5c326
+--- /dev/null
++++ b/scripts/test_pd_component.py
+@@ -0,0 +1,269 @@
++"""Windows acceptance against the real packaged executable, with isolated user data."""
++from __future__ import annotations
++import argparse
++import ctypes
++from concurrent.futures import ThreadPoolExecutor
++import importlib.util
++import json
++import os
++import shutil
++import struct
++import subprocess
++import tempfile
++import threading
++import time
++import unittest
++import zipfile
++from pathlib import Path
++
++spec = importlib.util.spec_from_file_location("packager", Path(__file__).with_name("package_pd_component.py"))
++packager = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(packager)
++OPTIONS = None
++
++
++def read_exact(file, count):
++    data = b""
++    while len(data) < count:
++        chunk = file.read(count - len(data))
++        if not chunk:
++            raise EOFError("pipe closed before the complete frame")
++        data += chunk
++    return data
++
++
++class ComponentAcceptance(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        if os.name != "nt":
++            raise unittest.SkipTest("Windows x64 runtime tests")
++        cls.temporary = tempfile.TemporaryDirectory(prefix="octoppet-acceptance-")
++        cls.root = Path(cls.temporary.name)
++        cls.installation = cls.root / "组件 安装测试" / "versions" / "test-version"
++        cls.user_data = cls.root / "独立 用户数据"
++        cls.user_data.mkdir()
++        cls.user_data.joinpath("retained.txt").write_text("retain-user-data", encoding="utf-8")
++        cls.user_data.joinpath("config.json").write_text(json.dumps({
++            "mascotId": "taiji-bot", "shortcutOpenPet": "", "shortcutOpenHome": "", "username": "",
++        }), encoding="utf-8")
++        cls.manifest = json.loads((OPTIONS.package_root / "latest-windows-x64.json").read_text(encoding="utf-8"))
++        cls.catalog = json.loads((OPTIONS.package_root / "catalog-entry.json").read_text(encoding="utf-8"))
++        cls.archive = OPTIONS.package_root / cls.manifest["version"] / f"paldee-pet-{cls.manifest['version']}-windows-x64.zip"
++        with zipfile.ZipFile(cls.archive) as bundle:
++            bundle.extractall(cls.installation)
++        cls.exe = cls.installation / "paldee-pet.exe"
++        cls.env = dict(os.environ, OCTOPPET_DATA_DIR=str(cls.user_data))
++
++    def invoke(self, command, expected=0, extra=(), env=None):
++        result = subprocess.run([str(self.exe), command, "--json", *extra], env=env or self.env,
++                                capture_output=True, text=True, encoding="utf-8", timeout=22)
++        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
++        value = json.loads(result.stdout)
++        self.assertEqual(value["protocol"], "octoppet-component@1")
++        self.assertEqual(value["id"], "octoppet")
++        self.assertEqual(value["version"], self.manifest["version"])
++        return value
++
++    def setUp(self):
++        self.invoke("stop")
++
++    def tearDown(self):
++        if self.exe.exists():
++            self.invoke("stop")
++
++    @classmethod
++    def tearDownClass(cls):
++        if cls.exe.exists():
++            subprocess.run([str(cls.exe), "stop", "--json"], env=cls.env, capture_output=True, timeout=22)
++        cls.temporary.cleanup()
++
++    def test_archive_metadata_architecture_and_allowlist(self):
++        result = packager.validate_archive(self.archive, self.manifest, self.catalog)
++        self.assertEqual(result["entry"], "paldee-pet.exe")
++        with zipfile.ZipFile(self.archive) as bundle:
++            metadata = json.loads(bundle.read("component.json"))
++            self.assertIs(metadata["launchable"], True)
++            self.assertEqual(metadata["settings"][0]["key"], "start_with_helper")
++            self.assertIs(metadata["settings"][0]["default"], False)
++        with zipfile.ZipFile(self.archive) as bundle:
++            for name in bundle.namelist():
++                self.assertTrue(name in ["component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe"] or
++                                name.startswith("licenses/"), name)
++
++    def test_chinese_space_path_and_repeat_launch(self):
++        first = self.invoke("start")
++        self.assertTrue(first["running"])
++        self.assertTrue(os.path.samefile(first["data_dir"], self.user_data))
++        self.assertEqual(self.invoke("start")["pid"], first["pid"])
++        # Test the ordinary double-click path as well as the JSON command.
++        repeated = subprocess.run([str(self.exe)], env=self.env, capture_output=True, timeout=22)
++        self.assertEqual(repeated.returncode, 0, repeated.stderr)
++        self.assertEqual(self.invoke("status")["pid"], first["pid"])
++        self.assertEqual({p.name for p in self.installation.iterdir()},
++                         {"component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe", "licenses"})
++
++    def test_concurrent_start_has_one_owner(self):
++        # Repeat cold starts to cover both contenders winning the ownership race.
++        for attempt in range(5):
++            with self.subTest(attempt=attempt):
++                self.invoke("stop")
++                with ThreadPoolExecutor(max_workers=2) as pool:
++                    values = list(pool.map(lambda _: self.invoke("start"), range(2)))
++                self.assertEqual(values[0]["pid"], values[1]["pid"])
++                self.assertEqual(self.invoke("status")["pid"], values[0]["pid"])
++
++    def test_start_and_status_queries_do_not_end_the_host(self):
++        first = self.invoke("start")
++        for attempt in range(10):
++            with self.subTest(attempt=attempt), ThreadPoolExecutor(max_workers=3) as pool:
++                values = list(pool.map(lambda command: self.invoke(command), ["start", "status", "status"]))
++                self.assertTrue(all(value["running"] for value in values))
++                self.assertEqual({value["pid"] for value in values}, {first["pid"]})
++        self.assertEqual(self.invoke("status")["pid"], first["pid"])
++
++    def test_show_hide_and_normal_stop(self):
++        pid = self.invoke("start")["pid"]
++        self.assertFalse(self.invoke("hide")["visible"])
++        self.assertFalse(self.invoke("start")["visible"])
++        self.assertTrue(self.invoke("show")["visible"])
++        stopped = self.invoke("stop")
++        self.assertFalse(stopped["running"])
++        self.assertIsNone(stopped["pid"])
++        self.assertFalse(self.invoke("stop")["running"])
++        self.assertFalse(self.invoke("status")["running"])
++        self.assertIsInstance(pid, int)
++
++    def test_abnormal_exit_releases_ownership(self):
++        first = self.invoke("start")
++        # Only kill the process started in this test's private scope, after verifying its image.
++        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
++        kernel.OpenProcess.restype = ctypes.c_void_p
++        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
++        kernel.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
++        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
++        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
++        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
++        handle = kernel.OpenProcess(0x101001, 0, first["pid"])
++        self.assertTrue(handle)
++        try:
++            buffer = ctypes.create_unicode_buffer(32768)
++            length = ctypes.c_uint32(len(buffer))
++            self.assertTrue(kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(length)))
++            self.assertEqual(Path(buffer.value).resolve(), self.exe.resolve())
++            self.assertTrue(kernel.TerminateProcess(handle, 99))
++            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0)
++        finally:
++            kernel.CloseHandle(handle)
++        deadline = time.monotonic() + 8
++        while self.invoke("status")["running"] and time.monotonic() < deadline:
++            time.sleep(0.1)
++        self.assertFalse(self.invoke("status")["running"])
++        self.assertTrue(self.invoke("start")["running"])
++
++    def test_invalid_commands_and_not_running(self):
++        self.assertEqual(self.invoke("shell", expected=2)["error"]["code"], "INVALID_ARGUMENT")
++        self.assertEqual(self.invoke("show", expected=4)["error"]["code"], "NOT_RUNNING")
++        self.assertEqual(self.invoke("hide", expected=4)["error"]["code"], "NOT_RUNNING")
++        self.assertEqual(self.invoke("status", expected=2, extra=("--timeout-ms", "99999"))["error"]["code"], "INVALID_ARGUMENT")
++
++    def test_protocol_negotiation_refuses_wrong_version(self):
++        value = self.invoke("start")
++        with open(value["control_pipe"], "r+b", buffering=0) as file:
++            request = json.dumps({"protocol": "octoppet-component@99", "command": "hide"}).encode()
++            file.write(struct.pack("<I", len(request)) + request)
++            length = struct.unpack("<I", read_exact(file, 4))[0]
++            result = json.loads(read_exact(file, length))
++            file.write(b"\x01")
++        self.assertFalse(result["ok"])
++        self.assertEqual(result["error"]["code"], "UNSUPPORTED_PROTOCOL")
++        self.assertTrue(self.invoke("status")["visible"])
++
++    def test_timeout_is_bounded_and_structured(self):
++        name = self.invoke("status")["control_pipe"]
++        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
++        kernel.CreateNamedPipeW.restype = ctypes.c_void_p
++        kernel.CreateNamedPipeW.argtypes = [ctypes.c_wchar_p, *([ctypes.c_uint32] * 6), ctypes.c_void_p]
++        kernel.ConnectNamedPipe.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
++        kernel.DisconnectNamedPipe.argtypes = [ctypes.c_void_p]
++        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
++        handle = kernel.CreateNamedPipeW(name, 0x00080003, 8, 1, 8192, 8192, 1000, None)
++        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
++        def stalled_test_server():
++            try:
++                kernel.ConnectNamedPipe(handle, None)
++                time.sleep(1)
++                kernel.DisconnectNamedPipe(handle)
++            finally:
++                kernel.CloseHandle(handle)
++        thread = threading.Thread(target=stalled_test_server, daemon=True)
++        thread.start()
++        try:
++            start = time.monotonic()
++            value = self.invoke("status", expected=5, extra=("--timeout-ms", "200"))
++            self.assertEqual(value["error"]["code"], "TIMEOUT")
++            self.assertLess(time.monotonic() - start, 5)
++        finally:
++            thread.join(timeout=3)
++        self.assertFalse(thread.is_alive())
++
++    def test_user_directory_inside_component_is_rejected(self):
++        managed_root = self.installation.parent.parent
++        forbidden = [self.installation, managed_root, managed_root / "user-data",
++                     managed_root / "versions" / "0.1.0" / "user-data"]
++        for path in forbidden:
++            existed = path.exists()
++            value = self.invoke("status", expected=8, env=dict(self.env, OCTOPPET_DATA_DIR=str(path)))
++            self.assertEqual(value["error"]["code"], "IO_ERROR")
++            self.assertIn("outside the component", value["error"]["message"])
++            if not existed:
++                self.assertFalse(path.exists())
++
++    def test_bad_metadata_size_hash_and_x86_are_rejected(self):
++        for manifest in [dict(self.manifest, size=self.manifest["size"] + 1),
++                         dict(self.manifest, sha256="0" * 64)]:
++            with self.assertRaises(ValueError):
++                packager.validate_archive(self.archive, manifest, self.catalog)
++        with self.assertRaises(ValueError):
++            packager.validate_archive(self.archive, self.manifest, dict(self.catalog, id="other"))
++        path = self.root / "x86-fixture.exe"
++        data = bytearray(70)
++        data[:2] = b"MZ"
++        struct.pack_into("<I", data, 60, 64)
++        data[64:68] = b"PE\0\0"
++        struct.pack_into("<H", data, 68, 0x14C)
++        path.write_bytes(data)
++        self.assertEqual(packager.pe_machine(path), 0x14C)
++        with self.assertRaisesRegex(ValueError, "Only Windows x64"):
++            packager.package(argparse.Namespace(version=self.manifest["version"],
++                base_url="https://www.xiaozs.com/sah/components/paldee-pet", pet=path,
++                bridge=self.installation / "pd-device-bridge.exe"))
++
++    def test_zz_uninstall_preserves_independent_user_data(self):
++        self.invoke("start")
++        self.invoke("stop")
++        managed_root = self.installation.parent.parent
++        self.assertTrue(managed_root.resolve().is_relative_to(self.root.resolve()))
++        shutil.rmtree(managed_root)
++        self.assertFalse(managed_root.exists())
++        self.assertEqual(self.user_data.joinpath("retained.txt").read_text(encoding="utf-8"), "retain-user-data")
++        self.assertTrue(self.user_data.joinpath("config.json").is_file())
++
++
++def main():
++    global OPTIONS
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--package-root", type=Path, required=True)
++    parser.add_argument("--report", type=Path, required=True)
++    OPTIONS = parser.parse_args()
++    suite = unittest.defaultTestLoader.loadTestsFromTestCase(ComponentAcceptance)
++    result = unittest.TextTestRunner(verbosity=2).run(suite)
++    report = {"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
++              "skipped": len(result.skipped), "success": result.wasSuccessful(),
++              "scope": "isolated Windows x64 package; Chinese/space installation path; no helper GUI integration"}
++    OPTIONS.report.parent.mkdir(parents=True, exist_ok=True)
++    OPTIONS.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
++    raise SystemExit(0 if result.wasSuccessful() else 1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/export_pd_component_patch.py b/scripts/export_pd_component_patch.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..670522bd4e883efe9e715cf2556f7337362c87a5
+--- /dev/null
++++ b/scripts/export_pd_component_patch.py
+@@ -0,0 +1,51 @@
++"""Export only the component implementation layer, leaving eye/other user edits out."""
++import argparse
++import difflib
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++TRACKED = ["src/lib/pdChatBridge.ts", "src/lib/pdChatBridge.test.ts", "src/lib/tauriApi.ts", ".gitignore", "package.json", "package-lock.json",
++           "src-tauri/tauri.conf.json", "src-tauri/src/tray.rs",
++           "src/main.tsx", "src/windows/SettingsWindow.tsx", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
++           "src-tauri/src/lib.rs", "src-tauri/src/config_cmd.rs",
++           "src-tauri/src/secrets_cmd.rs", "src-tauri/src/pd_bridge_cmd.rs"]
++ADDED = ["src/lib/brand.ts", "docs/upstream-sync/PALDEE_SYNC.md",
++         "docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md", "docs/PALDEE_PET_STARTUP_ACCEPTANCE.md", "docs/PALDEE_PET_FULL_CLI.md", "src-tauri/src/component_runtime.rs", "scripts/build_pd_component.ps1",
++         "scripts/package_pd_component.py", "scripts/test_pd_component.py",
++         "scripts/export_pd_component_patch.py", "docs/OCTOPPET_COMPONENT.md", "docs/OCTOPPET_COMPONENT_ACCEPTANCE.md"]
++
++def git(*args, data=None):
++    return subprocess.check_output(["git", "-c", "core.safecrlf=false", *args],
++                                   cwd=ROOT, input=data, stderr=subprocess.DEVNULL)
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--base", default="53b675d")
++    parser.add_argument("--output", type=Path, default=ROOT / "docs/upstream-sync/snapshots")
++    args = parser.parse_args()
++    base = git("rev-parse", args.base).decode().strip()
++    files = TRACKED + ADDED + sorted(p.relative_to(ROOT).as_posix()
++                                    for p in (ROOT / "packaging/third-party-licenses").rglob("*") if p.is_file())
++    tracked = [p for p in files if git("ls-files", "--", p).strip()]
++    patch = git("diff", "--binary", "--full-index", base, "--", *tracked).decode("utf-8")
++    for name in [p for p in files if p not in tracked]:
++        content = (ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n")
++        blob = git("hash-object", "--stdin", data=content.encode()).decode().strip()
++        patch += f"diff --git a/{name} b/{name}\nnew file mode 100644\nindex {'0'*40}..{blob}\n"
++        patch += "".join(difflib.unified_diff([], content.splitlines(True), fromfile="/dev/null", tofile="b/" + name))
++    args.output.mkdir(parents=True, exist_ok=True)
++    target = args.output / "octoppet-component.patch"
++    target.write_text(patch, encoding="utf-8", newline="\n")
++    manifest = {"baseline": base, "head": git("rev-parse", "HEAD").decode().strip(),
++                "patchSha256": hashlib.sha256(target.read_bytes()).hexdigest(),
++                "files": {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in files},
++                "scope": "Component and Paldee branding source layer; unrelated eye changes remain separate"}
++    (args.output / "octoppet-component.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    print("Exported component source patch; index and branch unchanged")
++
++if __name__ == "__main__":
++    main()
+diff --git a/docs/OCTOPPET_COMPONENT.md b/docs/OCTOPPET_COMPONENT.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..18e07a1da20b6ec383ef2f44f4eec30d606f4a38
+--- /dev/null
++++ b/docs/OCTOPPET_COMPONENT.md
+@@ -0,0 +1,102 @@
++# Paldee Pet：PD 小助手独立可选组件
++
++本次以用户提供的《PD 小助手外部功能组件接入规范》为准：
++D:/ai/screen-automation-cua-component/build/helper-cua-integration/docs/EXTERNAL_COMPONENT_PACKAGING.md。
++首版 ID 为 octoppet，组件与程序版本为 0.2.3；只支持实际构建的 Windows x64。
++旧的 pd-device-bridge 宠物组件打包方案、全局目录合并工具和相关上传包已退役，不能用于本次发布。
++
++## 仓库、程序及用户数据
++
++- Pet 源码保持在独立仓库 D:/ai/OctopPet，origin 为 https://github.com/xiaozs-com/OctopPet.git。
++- 本轮基线为 53b675d；已有未提交的眨眼、文档和快照改动保留。未提交、push 或发布本轮改动。
++- 构建采用现有 React/Vite + Tauri 2，Windows x64 MSVC，关闭安装器打包；不全局安装、不修改 PATH、不注册自启动。
++- ZIP 入口为 paldee-pet.exe（实际 Tauri release 程序）；网页资源已经嵌入程序。
++- 现有 PD CLI 桥接仍需独立开发的 pd-device-bridge.exe，作为运行必需文件随包附带；只复制发布程序与许可证，不复制源码进小助手。
++- Pet 许可证为 MIT。用户明确同意 PD 桥接代码按 MIT 分发，桥接独立仓库已补 LICENSE；第三方许可证与来源清单随包提供。
++- 配置默认位于 %APPDATA%/com.octop.pet/config.json，WebView 数据位于同目录的 webview/；保留原配置标识和系统 keyring 服务 com.octop.pet。
++- 发布版密码与令牌仅存系统 keyring，不在 ZIP 或配置中。开发版既有 dev-secrets.json 仍只用于开发，不进入组件包。
++- OCTOPPET_DATA_DIR 可指定绝对的独立用户目录，用于隔离测试或部署；拒绝整个组件根目录（含所有版本和同级数据子目录）及其父目录；检查通过后才创建目录。用户数据不随组件目录卸载。
++- 运行控制没有常驻日志文件；JSON 错误直接返回调用者，host 标准输出丢弃。Tauri 开发输出仍由开发控制台承接，不把窗口标题或账号数据写入发布包。
++- Windows 必须已有可用 WebView2 Runtime。本组件不静默安装它；缺失时启动失败须由调用者提示。
++
++## octoppet-component@1 运行协议
++
++命令格式：paldee-pet.exe COMMAND --json，可选 --timeout-ms 100..15000；默认总超时 15000 毫秒。
++
++| 命令   | 行为                                                                                   |
++| ------ | -------------------------------------------------------------------------------------- |
++| status | 查询运行、可见状态、PID、版本、用户目录及本机管道；未运行也成功返回 running=false      |
++| start  | 未运行时启动同一路径程序；已运行时返回原 PID，不重复创建窗口，也不主动重新显示隐藏窗口 |
++| stop   | 请求正常退出；等进程退出后返回 running=false。重复停止成功。不按任意 PID 强杀程序      |
++| show   | 显示宠物窗口，不主动将聊天窗口或其他应用切到前台；未运行返回 NOT_RUNNING               |
++| hide   | 隐藏宠物、聊天、设置窗口；不退出进程；未运行返回 NOT_RUNNING                           |
++
++直接双击/无参数执行仍启动宠物；重复双击为无操作。内部 --component-host 仅用于启动后台 GUI 进程。
++
++JSON 成功响应示例：
++
++```json
++{
++  "protocol": "octoppet-component@1",
++  "id": "octoppet",
++  "version": "0.2.3",
++  "ok": true,
++  "command": "status",
++  "running": true,
++  "visible": true,
++  "pid": 1234,
++  "error": null
++}
++```
++
++失败包含 ok=false 与 error.code/error.message。退出码：0 成功，2 INVALID_ARGUMENT，3 UNSUPPORTED_PROTOCOL，4 NOT_RUNNING，5 TIMEOUT，6 START_FAILED，8 IO_ERROR（含权限、帧格式或进程身份异常），9 WINDOW_ERROR。调用者必须同时检查退出码和 ok，不解析人类日志。
++
++控制连接为仅本机命名管道：当前用户 SID、登录会话、用户数据目录固定散列及 dev/release 区分作用域。仅当前用户有 ACL 权限，拒绝远程客户端；第一个管道实例持有运行权，进程异常退出后由系统释放，不依赖遗留 PID 文件。客户端核对系统返回的管道服务器 PID；不同用户、会话或数据目录相互隔离。
++
++聊天桥接协议仍为现有 pd-chat-cli@2，经原 Octop 聊天连接调用本机 CLI；生命周期管道不承接屏幕/鼠标/键盘命令，也不新增服务器连接或端口。本组件不声称屏幕操作全部为后台能力，原 PD CLI 的执行模式和产品限制照常适用。
++
++管道帧为 4 字节小端长度 + UTF-8 JSON，最多 8192 字节。请求仅含 protocol/command；客户端读完响应后发送单字节 1 确认，服务端才断开。每个服务端请求最多 3 秒，窗口主线程调度最多 2 秒。协议不兼容结构化拒绝。
++
++命令超时不会强杀现有 GUI 或其他进程；请求可能已生效，应再次 status 核对再重试。启动超时后仍可能稍后启动成功。异常退出后 status 返回未运行，start 可以恢复。更新和卸载之前必须先用旧版本入口执行 stop 并确认退出。
++
++## 构建与打包
++
++```powershell
++powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_pd_component.ps1 -BridgeRoot D:/ai/screen-automation-device-bridge
++```
++
++需已有 Node、Rust/MSVC、WebView2 和离线依赖缓存；脚本不安装这些工具。发布 ZIP 按固定白名单放入两个 EXE、component.json、根 LICENSE 与 licenses/ 文本，不遍历 target、缓存或用户目录。桥接采用静态 CRT，两个程序只直接导入系统 DLL，仍需系统已安装 WebView2 Runtime。PE 架构须为 AMD64，入口 status 的实际版本和运行协议也会检查。
++
++输出在 build/component-release/paldee-pet/：0.2.3/paldee-pet-0.2.3-windows-x64.zip、latest-windows-x64.json、catalog-entry.json，以及未签名清单备份与本地校验报告。
++
++component.json 使用规范字段。catalog-entry.json 是稳定的单条目录，只提供组件身份、分类和各平台清单地址，不包含 version/entry。版本、入口、大小和 SHA-256 由 latest 清单管理，并与 ZIP 内 component.json 核对。没有 components 数组或全局签名，不生成 catalog.json。普通版本更新只需上传 ZIP 和已签名的 latest 清单；新增组件或修改目录信息时才合并并重新签署全局目录。Paldee Pet 与 Cua 统一归入“交互增强”。
++
++latest-windows-x64.json 当前是未签名清单。签名前留存 latest-windows-x64.unsigned.json；由受控产品发布环境签名。仓库脚本不读取、创建、复制、输出或提交产品私钥。没有签名的清单不能在线安装，不得误当正式清单上传。
++
++## 人工上传边界
++
++仅由用户上传到 /www/wwwroot/xiaozs/sah/components/paldee-pet/：先版本目录下 ZIP，再验证公开下载字节数和 SHA-256，最后上传已签名的 latest-windows-x64.json。
++
++catalog-entry.json 交给全局目录维护者合并、重新签署并最后上传。OctopPet 仓库不处理全局目录，不访问/覆盖 Cua 的组件文件；历史候选全局目录不是本次产物。
++
++本轮仅做本地整改、构建及临时目录验收。小助手调用层还需按此协议调用 start/status/show/hide/stop，再完成原有组件仍可见、真实签名安装、更新和卸载联调。仅安装 ZIP 不意味着通用安装器自动获得这些控制动作。
++
++## 同步上游
++
++保留既有桥接与眨眼改动；新增运行协议集中在 component_runtime.rs，仅在 lib.rs、配置/开发凭据目录及随包桥接查找处接线。打包、测试与发布记录留在 scripts/ 和本文，避免修改上游构建和项目布局。上游更新后先检查这些接线位置、重跑检查及打包验收；不直接覆盖整个文件。
++
++本机适配器源码和服务端扩展仍在独立桥接仓库，OctopPet 仓库不加入 Octop Python 代码；本次不改服务器补丁或服务地址。
++
++本轮验收结果详见 [品牌版验收报告](PALDEE_PET_COMPONENT_ACCEPTANCE.md)。独立组件源码补丁可用 python scripts/export_pd_component_patch.py 重新导出，默认基线 53b675d；同步新上游后显式指定 --base，先检查上下文再应用。这个层不包含已有眨眼改动，也不操作 Git 索引或全局目录。桥接仓库的许可声明单独留在其独立仓库。
++
++对外名称与文件路径使用 Paldee Pet / paldee-pet；内部 ID octoppet、协议和数据标识保持兼容。原源码编译产物 octop-pet.exe 由打包器复制为 paldee-pet.exe，不改 Cargo 包名。0.2.0 旧包保留，仅新版本使用新入口和下载地址。
++
++start 命令使用同一用户/会话/数据目录作用域的 Windows 命名互斥锁串行检查和启动；锁等待计入默认 15 秒或自定义总超时，进程退出自动释放。没有常驻服务或新端口。
++
++## 打开与随主程序启动（0.2.2）
++
++component.json 声明 launchable=true，以及现有 settings 格式的布尔项 start_with_helper，默认 false，显示名为“随“屏幕自动化小助手”启动”。设置保存到小助手独立 component_configs/octoppet.json，不写入组件版本目录。
++
++小助手“功能组件”选中 Paldee Pet 后启用“打开”；打开通过 start --json 再 show --json，能显示已隐藏的现有实例，失败原因显示在组件页。小助手启动只读本地已验签目录，对用户明确开启此设置且已安装的应用调用 start --json，不联网下载，不注册 Windows 自启动，不强制 show，不随小助手退出而关闭独立桌宠。
++
++本功能也需要小助手调用层的本轮修改：components/manager.py、components/operations.py、gui/main_window.py；只更新 ZIP 无法让旧主程序执行联动启动。源码运行的小助手需重启；安装版需发布包含这些修改的新主程序。minimum_helper_version=1.2.6 表示配置/组件协议基线，不替代核实主程序包含本轮调用层。
+diff --git a/docs/OCTOPPET_COMPONENT_ACCEPTANCE.md b/docs/OCTOPPET_COMPONENT_ACCEPTANCE.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e4d1b4328b1bc78ec4ce60805e551e617f9eca76
+--- /dev/null
++++ b/docs/OCTOPPET_COMPONENT_ACCEPTANCE.md
+@@ -0,0 +1,51 @@
++> 本文记录旧 0.2.0 包的验收及哈希，保留作历史依据。当前品牌包请参阅 [Paldee Pet 0.2.1 验收记录](PALDEE_PET_COMPONENT_ACCEPTANCE.md)。
++
++# OctopPet 组件整改验收报告
++
++日期：2026-10-08。ID octoppet；版本 0.2.0；Windows x64；协议 octoppet-component@1。
++
++## 构建产物
++
++| 绝对路径                                                                                                |   字节数 | SHA-256                                                          |
++| ------------------------------------------------------------------------------------------------------- | -------: | ---------------------------------------------------------------- |
++| D:\ai\OctopPet\build\component-release\octoppet\0.2.0\octoppet-0.2.0-windows-x64.zip                    | 15377879 | fe292b8a9d097f9c60f53538e09c2afd9319a8d97e704f8b36b462b1b0f4a152 |
++| D:\ai\OctopPet\build\component-release\octoppet\latest-windows-x64.json                                 |      429 | 2a30a61c23f47886bdd2e0aa27e9ed4c909b710c33a142a491db8424e10331e8 |
++| D:\ai\OctopPet\build\component-release\octoppet\catalog-entry.json                                      |      515 | c544f8a4859f2014d939ef51e30977b57475bb56d2549b6baad1fb471d2779e1 |
++| D:\ai\OctopPet\src-tauri\target\x86_64-pc-windows-msvc\release\octop-pet.exe                            | 25062912 | 5e1872073ef41e29cfdf411e034bc6decbb605ec2bd1b48ce2ee361393c73230 |
++| D:\ai\screen-automation-device-bridge\native\target\x86_64-pc-windows-msvc\release\pd-device-bridge.exe |   491520 | 0fbb698ba8d977c760d4c57aa15210e23d5fc9f287a931113a144b19cbabac33 |
++
++latest-windows-x64.json 为未签名清单；原始未签名备份已保留。没有读取、创建、复制或输出产品签名私钥。签名必须在受控发布环境完成后才可上传和安装。catalog-entry.json 只有 OctopPet 自己的条目，没有生成全局 catalog.json。
++
++## 修改文件
++
++- src-tauri/src/component_runtime.rs：Windows 当前用户命名管道控制，JSON/超时/唯一实例/正常退出；GUI 子进程不继承调用者输出管道。
++- src-tauri/src/lib.rs：最小运行入口接线及独立 WebView 目录；src-tauri/src/config_cmd.rs、secrets_cmd.rs：保持原配置标识和 keyring 服务，支持独立测试用户目录；pd_bridge_cmd.rs：读取标准包元数据，定位随包桥接。
++- src-tauri/Cargo.toml、Cargo.lock：Windows 控制所需的已缓存依赖；未改动现有依赖版本。
++- scripts/build_pd_component.ps1、package_pd_component.py、test_pd_component.py、export_pd_component_patch.py：Windows x64 构建、规范打包、实际程序验收。旧全局合并工具已备份退役。
++- packaging/third-party-licenses/：补齐缺失许可证与固定源指纹。
++- .gitignore、CHANGELOG.md、docs/OCTOPPET_COMPONENT.md 与旧方案文档：构建产物隔离及整改记录。
++- 独立桥接仓库 D:/ai/screen-automation-device-bridge/LICENSE、native/Cargo.toml：按用户授权补 MIT 声明；桥接构建采用静态 CRT，未复制源码进小助手。
++
++当前分支为 master，HEAD 53b675d，为浅克隆；origin 指向 xiaozs-com/OctopPet，未更改分支或远程。初始已有的眨眼、素材说明及补丁快照工作区改动保留；本轮未提交、push 或发布。
++
++## 验证
++
++- 仓库 make all 的 Windows 等价检查通过：格式、ESLint、TypeScript、Rust fmt/check/clippy，前端 130、Pet Rust 27 测试通过。
++- 静态 CRT 桥接 Rust 3 测试通过，两个 EXE 的 PE Machine 均为 AMD64；打包检查拒绝 x86 与未随包提供的非系统 DLL。
++- 最终 ZIP 可解压，入口、许可证及成对桥接存在；三份 ID/版本/入口及架构一致；ZIP 字节数和哈希已复核，文件白名单检查通过。
++- ZIP 共 718 个文件，含 440 个第三方依赖许可证记录。没有缓存、凭据、日志、测试数据或用户数据。
++- 实际解压包 11 项测试通过：中文/空格路径、串行与并发重复启动、显隐、正常停止、异常退出恢复、协议不匹配拒绝、超时、x86/错误元数据/大小/哈希拒绝、整个组件根及其他版本目录的用户数据拒绝规则、删除整个组件根后保留独立用户数据。
++- 测试仅控制隔离目录中的宠物，未操作业务窗口、输入设备、服务器或 Cua 文件。首次诊断失败的候选包留在 .cache，未发布；最终包已重新验收。
++
++## 尚未完成的边界
++
++- 平台清单签名与公网下载/验签/安装检查。用户人工上传目标为 /www/wwwroot/xiaozs/sah/components/octoppet/。
++- 全局目录由产品维护者合并自己的目录条目并签名；本仓库不会生成或覆盖它。
++- 小助手调用层尚未按 octoppet-component@1 真机联调；不能把本地解压安装验收等同于已完成小助手功能组件 UI 的安装/更新/停止/卸载流程。
++- Windows x64 之外未发布；新包在本机现有 Windows/WebView2 环境验收，未测试没有 WebView2 的全新机器。普通聊天/本机 CLI 仍沿用既有桥接，本轮没有重新连接远程 Octop 验收。
++
++## 实现参考
++
++- Windows 命名管道权限：[Microsoft](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)。
++- 子进程句柄继承：[Microsoft](https://learn.microsoft.com/en-us/windows/win32/procthread/inheritance)。
++- 第三方源及下载指纹在 packaging/third-party-licenses/SOURCES.json，ZIP 内保留完整许可文本与源码下载地址。
+diff --git a/packaging/third-party-licenses/SOURCES.json b/packaging/third-party-licenses/SOURCES.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..3f710d89372a255e81cbd9cd2efbe636f36bddbe
+--- /dev/null
++++ b/packaging/third-party-licenses/SOURCES.json
+@@ -0,0 +1,54 @@
++{
++  "alloc-stdlib-0.2.4": [
++    {
++      "file": "alloc-stdlib-0.2.4/LICENSE-LICENSE.txt",
++      "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE",
++      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
++    }
++  ],
++  "selectors-0.36.1": [
++    {
++      "file": "selectors-0.36.1/LICENSE-index.txt.txt",
++      "url": "https://www.mozilla.org/media/MPL/2.0/index.txt",
++      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
++    }
++  ],
++  "tauri-plugin-2.6.3": [
++    {
++      "file": "tauri-plugin-2.6.3/LICENSE-LICENSE_MIT.txt",
++      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE_MIT",
++      "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
++    },
++    {
++      "file": "tauri-plugin-2.6.3/LICENSE-LICENSE_APACHE-2.0.txt",
++      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE_APACHE-2.0",
++      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
++    }
++  ],
++  "unic-0.9.0": [
++    {
++      "file": "unic-0.9.0/LICENSE-LICENSE-MIT.txt",
++      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
++      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
++    },
++    {
++      "file": "unic-0.9.0/LICENSE-LICENSE-APACHE.txt",
++      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE",
++      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
++    }
++  ],
++  "webview2-0.38.2": [
++    {
++      "file": "webview2-0.38.2/LICENSE-LICENSE.txt",
++      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE",
++      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
++    }
++  ],
++  "webview2-macros-0.8.1": [
++    {
++      "file": "webview2-macros-0.8.1/LICENSE-LICENSE.txt",
++      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
++      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
++    }
++  ]
++}
+diff --git a/packaging/third-party-licenses/alloc-stdlib-0.2.4/LICENSE-LICENSE.txt b/packaging/third-party-licenses/alloc-stdlib-0.2.4/LICENSE-LICENSE.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd496ba72eb37e83a44958358d1f89a8a28cbc15
+--- /dev/null
++++ b/packaging/third-party-licenses/alloc-stdlib-0.2.4/LICENSE-LICENSE.txt
+@@ -0,0 +1,12 @@
++Copyright (c) 2016 Dropbox, Inc.
++All rights reserved.
++
++Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
++
++1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
++
++2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
++
++3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+diff --git a/packaging/third-party-licenses/selectors-0.36.1/LICENSE-index.txt.txt b/packaging/third-party-licenses/selectors-0.36.1/LICENSE-index.txt.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..d0a1fa1482eea82e19510e7920cbe3a03e41f691
+--- /dev/null
++++ b/packaging/third-party-licenses/selectors-0.36.1/LICENSE-index.txt.txt
+@@ -0,0 +1,373 @@
++Mozilla Public License Version 2.0
++==================================
++
++1. Definitions
++--------------
++
++1.1. "Contributor"
++    means each individual or legal entity that creates, contributes to
++    the creation of, or owns Covered Software.
++
++1.2. "Contributor Version"
++    means the combination of the Contributions of others (if any) used
++    by a Contributor and that particular Contributor's Contribution.
++
++1.3. "Contribution"
++    means Covered Software of a particular Contributor.
++
++1.4. "Covered Software"
++    means Source Code Form to which the initial Contributor has attached
++    the notice in Exhibit A, the Executable Form of such Source Code
++    Form, and Modifications of such Source Code Form, in each case
++    including portions thereof.
++
++1.5. "Incompatible With Secondary Licenses"
++    means
++
++    (a) that the initial Contributor has attached the notice described
++        in Exhibit B to the Covered Software; or
++
++    (b) that the Covered Software was made available under the terms of
++        version 1.1 or earlier of the License, but not also under the
++        terms of a Secondary License.
++
++1.6. "Executable Form"
++    means any form of the work other than Source Code Form.
++
++1.7. "Larger Work"
++    means a work that combines Covered Software with other material, in
++    a separate file or files, that is not Covered Software.
++
++1.8. "License"
++    means this document.
++
++1.9. "Licensable"
++    means having the right to grant, to the maximum extent possible,
++    whether at the time of the initial grant or subsequently, any and
++    all of the rights conveyed by this License.
++
++1.10. "Modifications"
++    means any of the following:
++
++    (a) any file in Source Code Form that results from an addition to,
++        deletion from, or modification of the contents of Covered
++        Software; or
++
++    (b) any new file in Source Code Form that contains any Covered
++        Software.
++
++1.11. "Patent Claims" of a Contributor
++    means any patent claim(s), including without limitation, method,
++    process, and apparatus claims, in any patent Licensable by such
++    Contributor that would be infringed, but for the grant of the
++    License, by the making, using, selling, offering for sale, having
++    made, import, or transfer of either its Contributions or its
++    Contributor Version.
++
++1.12. "Secondary License"
++    means either the GNU General Public License, Version 2.0, the GNU
++    Lesser General Public License, Version 2.1, the GNU Affero General
++    Public License, Version 3.0, or any later versions of those
++    licenses.
++
++1.13. "Source Code Form"
++    means the form of the work preferred for making modifications.
++
++1.14. "You" (or "Your")
++    means an individual or a legal entity exercising rights under this
++    License. For legal entities, "You" includes any entity that
++    controls, is controlled by, or is under common control with You. For
++    purposes of this definition, "control" means (a) the power, direct
++    or indirect, to cause the direction or management of such entity,
++    whether by contract or otherwise, or (b) ownership of more than
++    fifty percent (50%) of the outstanding shares or beneficial
++    ownership of such entity.
++
++2. License Grants and Conditions
++--------------------------------
++
++2.1. Grants
++
++Each Contributor hereby grants You a world-wide, royalty-free,
++non-exclusive license:
++
++(a) under intellectual property rights (other than patent or trademark)
++    Licensable by such Contributor to use, reproduce, make available,
++    modify, display, perform, distribute, and otherwise exploit its
++    Contributions, either on an unmodified basis, with Modifications, or
++    as part of a Larger Work; and
++
++(b) under Patent Claims of such Contributor to make, use, sell, offer
++    for sale, have made, import, and otherwise transfer either its
++    Contributions or its Contributor Version.
++
++2.2. Effective Date
++
++The licenses granted in Section 2.1 with respect to any Contribution
++become effective for each Contribution on the date the Contributor first
++distributes such Contribution.
++
++2.3. Limitations on Grant Scope
++
++The licenses granted in this Section 2 are the only rights granted under
++this License. No additional rights or licenses will be implied from the
++distribution or licensing of Covered Software under this License.
++Notwithstanding Section 2.1(b) above, no patent license is granted by a
++Contributor:
++
++(a) for any code that a Contributor has removed from Covered Software;
++    or
++
++(b) for infringements caused by: (i) Your and any other third party's
++    modifications of Covered Software, or (ii) the combination of its
++    Contributions with other software (except as part of its Contributor
++    Version); or
++
++(c) under Patent Claims infringed by Covered Software in the absence of
++    its Contributions.
++
++This License does not grant any rights in the trademarks, service marks,
++or logos of any Contributor (except as may be necessary to comply with
++the notice requirements in Section 3.4).
++
++2.4. Subsequent Licenses
++
++No Contributor makes additional grants as a result of Your choice to
++distribute the Covered Software under a subsequent version of this
++License (see Section 10.2) or under the terms of a Secondary License (if
++permitted under the terms of Section 3.3).
++
++2.5. Representation
++
++Each Contributor represents that the Contributor believes its
++Contributions are its original creation(s) or it has sufficient rights
++to grant the rights to its Contributions conveyed by this License.
++
++2.6. Fair Use
++
++This License is not intended to limit any rights You have under
++applicable copyright doctrines of fair use, fair dealing, or other
++equivalents.
++
++2.7. Conditions
++
++Sections 3.1, 3.2, 3.3, and 3.4 are conditions of the licenses granted
++in Section 2.1.
++
++3. Responsibilities
++-------------------
++
++3.1. Distribution of Source Form
++
++All distribution of Covered Software in Source Code Form, including any
++Modifications that You create or to which You contribute, must be under
++the terms of this License. You must inform recipients that the Source
++Code Form of the Covered Software is governed by the terms of this
++License, and how they can obtain a copy of this License. You may not
++attempt to alter or restrict the recipients' rights in the Source Code
++Form.
++
++3.2. Distribution of Executable Form
++
++If You distribute Covered Software in Executable Form then:
++
++(a) such Covered Software must also be made available in Source Code
++    Form, as described in Section 3.1, and You must inform recipients of
++    the Executable Form how they can obtain a copy of such Source Code
++    Form by reasonable means in a timely manner, at a charge no more
++    than the cost of distribution to the recipient; and
++
++(b) You may distribute such Executable Form under the terms of this
++    License, or sublicense it under different terms, provided that the
++    license for the Executable Form does not attempt to limit or alter
++    the recipients' rights in the Source Code Form under this License.
++
++3.3. Distribution of a Larger Work
++
++You may create and distribute a Larger Work under terms of Your choice,
++provided that You also comply with the requirements of this License for
++the Covered Software. If the Larger Work is a combination of Covered
++Software with a work governed by one or more Secondary Licenses, and the
++Covered Software is not Incompatible With Secondary Licenses, this
++License permits You to additionally distribute such Covered Software
++under the terms of such Secondary License(s), so that the recipient of
++the Larger Work may, at their option, further distribute the Covered
++Software under the terms of either this License or such Secondary
++License(s).
++
++3.4. Notices
++
++You may not remove or alter the substance of any license notices
++(including copyright notices, patent notices, disclaimers of warranty,
++or limitations of liability) contained within the Source Code Form of
++the Covered Software, except that You may alter any license notices to
++the extent required to remedy known factual inaccuracies.
++
++3.5. Application of Additional Terms
++
++You may choose to offer, and to charge a fee for, warranty, support,
++indemnity or liability obligations to one or more recipients of Covered
++Software. However, You may do so only on Your own behalf, and not on
++behalf of any Contributor. You must make it absolutely clear that any
++such warranty, support, indemnity, or liability obligation is offered by
++You alone, and You hereby agree to indemnify every Contributor for any
++liability incurred by such Contributor as a result of warranty, support,
++indemnity or liability terms You offer. You may include additional
++disclaimers of warranty and limitations of liability specific to any
++jurisdiction.
++
++4. Inability to Comply Due to Statute or Regulation
++---------------------------------------------------
++
++If it is impossible for You to comply with any of the terms of this
++License with respect to some or all of the Covered Software due to
++statute, judicial order, or regulation then You must: (a) comply with
++the terms of this License to the maximum extent possible; and (b)
++describe the limitations and the code they affect. Such description must
++be placed in a text file included with all distributions of the Covered
++Software under this License. Except to the extent prohibited by statute
++or regulation, such description must be sufficiently detailed for a
++recipient of ordinary skill to be able to understand it.
++
++5. Termination
++--------------
++
++5.1. The rights granted under this License will terminate automatically
++if You fail to comply with any of its terms. However, if You become
++compliant, then the rights granted under this License from a particular
++Contributor are reinstated (a) provisionally, unless and until such
++Contributor explicitly and finally terminates Your grants, and (b) on an
++ongoing basis, if such Contributor fails to notify You of the
++non-compliance by some reasonable means prior to 60 days after You have
++come back into compliance. Moreover, Your grants from a particular
++Contributor are reinstated on an ongoing basis if such Contributor
++notifies You of the non-compliance by some reasonable means, this is the
++first time You have received notice of non-compliance with this License
++from such Contributor, and You become compliant prior to 30 days after
++Your receipt of the notice.
++
++5.2. If You initiate litigation against any entity by asserting a patent
++infringement claim (excluding declaratory judgment actions,
++counter-claims, and cross-claims) alleging that a Contributor Version
++directly or indirectly infringes any patent, then the rights granted to
++You by any and all Contributors for the Covered Software under Section
++2.1 of this License shall terminate.
++
++5.3. In the event of termination under Sections 5.1 or 5.2 above, all
++end user license agreements (excluding distributors and resellers) which
++have been validly granted by You or Your distributors under this License
++prior to termination shall survive termination.
++
++************************************************************************
++*                                                                      *
++*  6. Disclaimer of Warranty                                           *
++*  -------------------------                                           *
++*                                                                      *
++*  Covered Software is provided under this License on an "as is"       *
++*  basis, without warranty of any kind, either expressed, implied, or  *
++*  statutory, including, without limitation, warranties that the       *
++*  Covered Software is free of defects, merchantable, fit for a        *
++*  particular purpose or non-infringing. The entire risk as to the     *
++*  quality and performance of the Covered Software is with You.        *
++*  Should any Covered Software prove defective in any respect, You     *
++*  (not any Contributor) assume the cost of any necessary servicing,   *
++*  repair, or correction. This disclaimer of warranty constitutes an   *
++*  essential part of this License. No use of any Covered Software is   *
++*  authorized under this License except under this disclaimer.         *
++*                                                                      *
++************************************************************************
++
++************************************************************************
++*                                                                      *
++*  7. Limitation of Liability                                          *
++*  --------------------------                                          *
++*                                                                      *
++*  Under no circumstances and under no legal theory, whether tort      *
++*  (including negligence), contract, or otherwise, shall any           *
++*  Contributor, or anyone who distributes Covered Software as          *
++*  permitted above, be liable to You for any direct, indirect,         *
++*  special, incidental, or consequential damages of any character      *
++*  including, without limitation, damages for lost profits, loss of    *
++*  goodwill, work stoppage, computer failure or malfunction, or any    *
++*  and all other commercial damages or losses, even if such party      *
++*  shall have been informed of the possibility of such damages. This   *
++*  limitation of liability shall not apply to liability for death or   *
++*  personal injury resulting from such party's negligence to the       *
++*  extent applicable law prohibits such limitation. Some               *
++*  jurisdictions do not allow the exclusion or limitation of           *
++*  incidental or consequential damages, so this exclusion and          *
++*  limitation may not apply to You.                                    *
++*                                                                      *
++************************************************************************
++
++8. Litigation
++-------------
++
++Any litigation relating to this License may be brought only in the
++courts of a jurisdiction where the defendant maintains its principal
++place of business and such litigation shall be governed by laws of that
++jurisdiction, without reference to its conflict-of-law provisions.
++Nothing in this Section shall prevent a party's ability to bring
++cross-claims or counter-claims.
++
++9. Miscellaneous
++----------------
++
++This License represents the complete agreement concerning the subject
++matter hereof. If any provision of this License is held to be
++unenforceable, such provision shall be reformed only to the extent
++necessary to make it enforceable. Any law or regulation which provides
++that the language of a contract shall be construed against the drafter
++shall not be used to construe this License against a Contributor.
++
++10. Versions of the License
++---------------------------
++
++10.1. New Versions
++
++Mozilla Foundation is the license steward. Except as provided in Section
++10.3, no one other than the license steward has the right to modify or
++publish new versions of this License. Each version will be given a
++distinguishing version number.
++
++10.2. Effect of New Versions
++
++You may distribute the Covered Software under the terms of the version
++of the License under which You originally received the Covered Software,
++or under the terms of any subsequent version published by the license
++steward.
++
++10.3. Modified Versions
++
++If you create software not governed by this License, and you want to
++create a new license for such software, you may create and use a
++modified version of this License if you rename the license and remove
++any references to the name of the license steward (except to note that
++such modified license differs from this License).
++
++10.4. Distributing Source Code Form that is Incompatible With Secondary
++Licenses
++
++If You choose to distribute Source Code Form that is Incompatible With
++Secondary Licenses under the terms of this version of the License, the
++notice described in Exhibit B of this License must be attached.
++
++Exhibit A - Source Code Form License Notice
++-------------------------------------------
++
++  This Source Code Form is subject to the terms of the Mozilla Public
++  License, v. 2.0. If a copy of the MPL was not distributed with this
++  file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++If it is not possible or desirable to put the notice in a particular
++file, then You may include the notice in a location (such as a LICENSE
++file in a relevant directory) where a recipient would be likely to look
++for such a notice.
++
++You may add additional accurate notices of copyright ownership.
++
++Exhibit B - "Incompatible With Secondary Licenses" Notice
++---------------------------------------------------------
++
++  This Source Code Form is "Incompatible With Secondary Licenses", as
++  defined by the Mozilla Public License, v. 2.0.
+diff --git a/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_APACHE-2.0.txt b/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_APACHE-2.0.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..f433b1a53f5b830a205fd2df78e2b34974656c7b
+--- /dev/null
++++ b/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_APACHE-2.0.txt
+@@ -0,0 +1,177 @@
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
+diff --git a/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_MIT.txt b/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_MIT.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..b08530d59433b3060f4fad8751ac2610c0b0aff3
+--- /dev/null
++++ b/packaging/third-party-licenses/tauri-plugin-2.6.3/LICENSE-LICENSE_MIT.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2017 - Present Tauri Apps Contributors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-APACHE.txt b/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-APACHE.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..16fe87b06e802f094b3fbb0894b137bca2b16ef1
+--- /dev/null
++++ b/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-APACHE.txt
+@@ -0,0 +1,201 @@
++                              Apache License
++                        Version 2.0, January 2004
++                     http://www.apache.org/licenses/
++
++TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++1. Definitions.
++
++   "License" shall mean the terms and conditions for use, reproduction,
++   and distribution as defined by Sections 1 through 9 of this document.
++
++   "Licensor" shall mean the copyright owner or entity authorized by
++   the copyright owner that is granting the License.
++
++   "Legal Entity" shall mean the union of the acting entity and all
++   other entities that control, are controlled by, or are under common
++   control with that entity. For the purposes of this definition,
++   "control" means (i) the power, direct or indirect, to cause the
++   direction or management of such entity, whether by contract or
++   otherwise, or (ii) ownership of fifty percent (50%) or more of the
++   outstanding shares, or (iii) beneficial ownership of such entity.
++
++   "You" (or "Your") shall mean an individual or Legal Entity
++   exercising permissions granted by this License.
++
++   "Source" form shall mean the preferred form for making modifications,
++   including but not limited to software source code, documentation
++   source, and configuration files.
++
++   "Object" form shall mean any form resulting from mechanical
++   transformation or translation of a Source form, including but
++   not limited to compiled object code, generated documentation,
++   and conversions to other media types.
++
++   "Work" shall mean the work of authorship, whether in Source or
++   Object form, made available under the License, as indicated by a
++   copyright notice that is included in or attached to the work
++   (an example is provided in the Appendix below).
++
++   "Derivative Works" shall mean any work, whether in Source or Object
++   form, that is based on (or derived from) the Work and for which the
++   editorial revisions, annotations, elaborations, or other modifications
++   represent, as a whole, an original work of authorship. For the purposes
++   of this License, Derivative Works shall not include works that remain
++   separable from, or merely link (or bind by name) to the interfaces of,
++   the Work and Derivative Works thereof.
++
++   "Contribution" shall mean any work of authorship, including
++   the original version of the Work and any modifications or additions
++   to that Work or Derivative Works thereof, that is intentionally
++   submitted to Licensor for inclusion in the Work by the copyright owner
++   or by an individual or Legal Entity authorized to submit on behalf of
++   the copyright owner. For the purposes of this definition, "submitted"
++   means any form of electronic, verbal, or written communication sent
++   to the Licensor or its representatives, including but not limited to
++   communication on electronic mailing lists, source code control systems,
++   and issue tracking systems that are managed by, or on behalf of, the
++   Licensor for the purpose of discussing and improving the Work, but
++   excluding communication that is conspicuously marked or otherwise
++   designated in writing by the copyright owner as "Not a Contribution."
++
++   "Contributor" shall mean Licensor and any individual or Legal Entity
++   on behalf of whom a Contribution has been received by Licensor and
++   subsequently incorporated within the Work.
++
++2. Grant of Copyright License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   copyright license to reproduce, prepare Derivative Works of,
++   publicly display, publicly perform, sublicense, and distribute the
++   Work and such Derivative Works in Source or Object form.
++
++3. Grant of Patent License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   (except as stated in this section) patent license to make, have made,
++   use, offer to sell, sell, import, and otherwise transfer the Work,
++   where such license applies only to those patent claims licensable
++   by such Contributor that are necessarily infringed by their
++   Contribution(s) alone or by combination of their Contribution(s)
++   with the Work to which such Contribution(s) was submitted. If You
++   institute patent litigation against any entity (including a
++   cross-claim or counterclaim in a lawsuit) alleging that the Work
++   or a Contribution incorporated within the Work constitutes direct
++   or contributory patent infringement, then any patent licenses
++   granted to You under this License for that Work shall terminate
++   as of the date such litigation is filed.
++
++4. Redistribution. You may reproduce and distribute copies of the
++   Work or Derivative Works thereof in any medium, with or without
++   modifications, and in Source or Object form, provided that You
++   meet the following conditions:
++
++   (a) You must give any other recipients of the Work or
++       Derivative Works a copy of this License; and
++
++   (b) You must cause any modified files to carry prominent notices
++       stating that You changed the files; and
++
++   (c) You must retain, in the Source form of any Derivative Works
++       that You distribute, all copyright, patent, trademark, and
++       attribution notices from the Source form of the Work,
++       excluding those notices that do not pertain to any part of
++       the Derivative Works; and
++
++   (d) If the Work includes a "NOTICE" text file as part of its
++       distribution, then any Derivative Works that You distribute must
++       include a readable copy of the attribution notices contained
++       within such NOTICE file, excluding those notices that do not
++       pertain to any part of the Derivative Works, in at least one
++       of the following places: within a NOTICE text file distributed
++       as part of the Derivative Works; within the Source form or
++       documentation, if provided along with the Derivative Works; or,
++       within a display generated by the Derivative Works, if and
++       wherever such third-party notices normally appear. The contents
++       of the NOTICE file are for informational purposes only and
++       do not modify the License. You may add Your own attribution
++       notices within Derivative Works that You distribute, alongside
++       or as an addendum to the NOTICE text from the Work, provided
++       that such additional attribution notices cannot be construed
++       as modifying the License.
++
++   You may add Your own copyright statement to Your modifications and
++   may provide additional or different license terms and conditions
++   for use, reproduction, or distribution of Your modifications, or
++   for any such Derivative Works as a whole, provided Your use,
++   reproduction, and distribution of the Work otherwise complies with
++   the conditions stated in this License.
++
++5. Submission of Contributions. Unless You explicitly state otherwise,
++   any Contribution intentionally submitted for inclusion in the Work
++   by You to the Licensor shall be under the terms and conditions of
++   this License, without any additional terms or conditions.
++   Notwithstanding the above, nothing herein shall supersede or modify
++   the terms of any separate license agreement you may have executed
++   with Licensor regarding such Contributions.
++
++6. Trademarks. This License does not grant permission to use the trade
++   names, trademarks, service marks, or product names of the Licensor,
++   except as required for reasonable and customary use in describing the
++   origin of the Work and reproducing the content of the NOTICE file.
++
++7. Disclaimer of Warranty. Unless required by applicable law or
++   agreed to in writing, Licensor provides the Work (and each
++   Contributor provides its Contributions) on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++   implied, including, without limitation, any warranties or conditions
++   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++   PARTICULAR PURPOSE. You are solely responsible for determining the
++   appropriateness of using or redistributing the Work and assume any
++   risks associated with Your exercise of permissions under this License.
++
++8. Limitation of Liability. In no event and under no legal theory,
++   whether in tort (including negligence), contract, or otherwise,
++   unless required by applicable law (such as deliberate and grossly
++   negligent acts) or agreed to in writing, shall any Contributor be
++   liable to You for damages, including any direct, indirect, special,
++   incidental, or consequential damages of any character arising as a
++   result of this License or out of the use or inability to use the
++   Work (including but not limited to damages for loss of goodwill,
++   work stoppage, computer failure or malfunction, or any and all
++   other commercial damages or losses), even if such Contributor
++   has been advised of the possibility of such damages.
++
++9. Accepting Warranty or Additional Liability. While redistributing
++   the Work or Derivative Works thereof, You may choose to offer,
++   and charge a fee for, acceptance of support, warranty, indemnity,
++   or other liability obligations and/or rights consistent with this
++   License. However, in accepting such obligations, You may act only
++   on Your own behalf and on Your sole responsibility, not on behalf
++   of any other Contributor, and only if You agree to indemnify,
++   defend, and hold each Contributor harmless for any liability
++   incurred by, or claims asserted against, such Contributor by reason
++   of your accepting any such warranty or additional liability.
++
++END OF TERMS AND CONDITIONS
++
++APPENDIX: How to apply the Apache License to your work.
++
++   To apply the Apache License to your work, attach the following
++   boilerplate notice, with the fields enclosed by brackets "[]"
++   replaced with your own identifying information. (Don't include
++   the brackets!)  The text should be enclosed in the appropriate
++   comment syntax for the file format. We also recommend that a
++   file or class name and description of purpose be included on the
++   same "printed page" as the copyright notice for easier
++   identification within third-party archives.
++
++Copyright [yyyy] [name of copyright owner]
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++	http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
+diff --git a/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-MIT.txt b/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-MIT.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..31aa79387f27e730e33d871925e152e35e428031
+--- /dev/null
++++ b/packaging/third-party-licenses/unic-0.9.0/LICENSE-LICENSE-MIT.txt
+@@ -0,0 +1,23 @@
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
+diff --git a/packaging/third-party-licenses/webview2-0.38.2/LICENSE-LICENSE.txt b/packaging/third-party-licenses/webview2-0.38.2/LICENSE-LICENSE.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..de9a7e660e173136b351982a34f715af424ff812
+--- /dev/null
++++ b/packaging/third-party-licenses/webview2-0.38.2/LICENSE-LICENSE.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2021 Bill Avery
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/packaging/third-party-licenses/webview2-macros-0.8.1/LICENSE-LICENSE.txt b/packaging/third-party-licenses/webview2-macros-0.8.1/LICENSE-LICENSE.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..de9a7e660e173136b351982a34f715af424ff812
+--- /dev/null
++++ b/packaging/third-party-licenses/webview2-macros-0.8.1/LICENSE-LICENSE.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2021 Bill Avery
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.

@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Kept the component host alive when startup and status clients overlap by allowing the named-pipe default instance limit.
+
+- Bounded retries for transient start/status pipe closures during concurrent component startup.
+
+- Taiji default idle: fixed body with an eye-only blink every five seconds; removed body movement from the default rendering.
+
+- PD bridge: browser CLI commands now pass through all bridge layers; proxy failures report their cause instead of a generic unavailable message.
+
+### Changed
+
+- Component catalog entries now omit version and entry fields; Paldee Pet and Cua use the interaction enhancement category. Routine releases update only the ZIP and signed latest manifest.
+
+- Paldee Pet 0.2.3 forwards every helper CLI family and adds stdin/file transport on the existing chat socket; preserves the optional Helper startup setting.
+
+- Forward all helper CLI subcommands instead of restricting command families; argument framing and fixed executable boundaries remain.
+
+- Paldee Pet 0.2.2 enables the Helper component Open button and declares the optional, default-off start-with-helper setting. The Helper caller uses JSON lifecycle control.
+
+- Paldee Pet component 0.2.1 uses paldee-pet.exe, branded ZIP names and /sah/components/paldee-pet/ URLs while retaining the octoppet identity.
+
+- Renamed the visible application to Paldee Pet; shared branding comes from Tauri productName. Component identity, keyring and user data remain compatible.
+
+- Removed the PD bridge authorization dialog for all supported helper CLI operations, including window activation. Helper failures remain visible in chat.
+
+- Restored the original Octop AI chat entry and settings; removed the separate local Helper dialogue and direct CLI integration. PD integration will be provided through an independent component and Skill.
+
 ### Added
+
+- Taiji animation states now follow chat activity, so the pet shows thinking, working, waiting, success and error instead of staying on idle, and greets when the chat window opens.
+
+- Standard `octoppet` Windows x64 optional component packaging, independent user data, and `octoppet-component@1` JSON lifecycle control. Manifests are generated unsigned for controlled release signing; this repository no longer merges global catalogs.
+
+- Windows component packaging combines the pet and its CLI adapter for the Helper's existing signed installation and update mechanism; distribution remains a separate publishing step.
+
+- Experimental on-demand PD CLI proxy over the existing Octop chat WebSocket. The existing screen-automation Skill calls the local helper without an extra bridge authorization dialog; ordinary chat does not invoke the helper. Includes PNG capture transport. Reuses existing WS or WSS without port changes; requires the independent server adapter and a private Agent; remote deployment is pending.
 
 - Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
 - Optional MascotImage animationState prop for future task-state integration, plus an offline animation preview and asset manifest.
@@ -54,6 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: tag/version validation + CHANGELOG injection
 
 ### Changed
+
+- Renamed the visible application to Paldee Pet; shared branding comes from Tauri productName. Component identity, keyring and user data remain compatible.
 
 - Chat window starts at 400px and stays resizable; empty compact state fills the window instead of shrink-wrapping
 - Sending a message no longer changes chat window height

@@ -1,0 +1,13 @@
+{
+  "baseline": "439130083d9493510f6f2e313b6b36ce4ca6d90d",
+  "head_at_export": "ad49a8eeec42689c03f4ead3db1a9f30b4688c69",
+  "source_repo": "D:\\ai\\screen-automation-helper",
+  "patchSha256": "0c6aa07cee6c5aae2ca979362f88deaceb02b6bd75bbdd5bf8ca265a3eef7740",
+  "files": {
+    "components/manager.py": "ad60f2bea33c5b7fcee3df669ffd20ab5b62451c527b3bac5d31e6b0acbdc354",
+    "components/operations.py": "2837ad2c0cd243ea49a36210274fa8b4336e1b0b50d327ed9d46b51d66899290",
+    "gui/main_window.py": "df71c672fce1dd7b18c5062676a667324b02c318b809c089bdd3175abb236977",
+    "tests/test_component_application_startup.py": "07e58283a76149f505429e3c2a4803486302a3a34261f482a5252966b292bda8"
+  },
+  "scope": "Component Open and explicit start_with_helper; helper changes already present in ad49a8ee, do not apply twice"
+}

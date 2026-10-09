@@ -1,0 +1,153 @@
+diff --git a/public/mascots/taiji-bot/README.md b/public/mascots/taiji-bot/README.md
+index 20c243740a8917081734ddb3a2a9c29d6477ebb6..1f35b1344d07ad30c5773f8ebeb2caeec9020202 100644
+--- a/public/mascots/taiji-bot/README.md
++++ b/public/mascots/taiji-bot/README.md
+@@ -19,3 +19,7 @@ OctopPet 现有 MascotImage 使用 img，可直接加载动画 WebP；不需要
+ 原始生成图集 spritesheet-source.png 为 887×1774，动作行间距不完全均匀。已根据透明通道确定各行动作边界，单独截取、居中留白后重组为标准 888×1776 图集 spritesheet.png，再按 222×222 切帧，避免截断头顶或带入下一行。
+ 
+ 本包未修改聊天协议，未提供安装包，未发布到 GitHub。
++
++## 默认动画修正（2026-10-08）
++
++Pet 和设置中的默认形象现使用 idle.png 作固定主体，MascotImage 仅在眼部叠加 5 秒一轮的眨眼效果；原 idle.webp 不再用于默认呈现。原始素材和其他状态 WebP 保留。本目录离线 preview.html 仍展示原始素材，当前客户端效果以 Pet 为准。减少动态效果的系统设置会停用眨眼。
+diff --git a/src/components/MascotImage.tsx b/src/components/MascotImage.tsx
+index cea1b4e14af285f9e48ff96257062190cfcf1b7a..33bdb92936532777deb4e9e7f0c6f2738f689ba8 100644
+--- a/src/components/MascotImage.tsx
++++ b/src/components/MascotImage.tsx
+@@ -1,3 +1,4 @@
++import "../styles/mascot.css";
+ import {
+   mascotAnimationSource,
+   type TaijiAnimationState,
+@@ -12,6 +13,33 @@ export default function MascotImage({
+   src,
+   animationState = "idle",
+ }: MascotImageProps) {
++  if (
++    mascotAnimationSource(src, animationState) ===
++    "/mascots/taiji-bot/idle.webp"
++  ) {
++    return (
++      <span className="mascot-image taiji-idle">
++        <img
++          src="/mascots/taiji-bot/idle.png"
++          alt="太极机器人"
++          draggable={false}
++        />
++        <svg viewBox="0 0 222 222" aria-hidden="true" focusable="false">
++          <g className="taiji-idle-eyes">
++            <ellipse cx="88" cy="103" rx="18" ry="19" fill="#fff" />
++            <ellipse cx="154" cy="103" rx="18" ry="19" fill="#fff" />
++            <path
++              d="M 77 104 Q 88 94 99 104 M 143 104 Q 154 94 165 104"
++              fill="none"
++              stroke="#171717"
++              strokeWidth="3.5"
++              strokeLinecap="round"
++            />
++          </g>
++        </svg>
++      </span>
++    );
++  }
+   return (
+     <img
+       className="mascot-image"
+diff --git a/src/styles/mascot.css b/src/styles/mascot.css
+new file mode 100644
+index 0000000000000000000000000000000000000000..50ef80dbbbca7556d01e63c98dea9d6e21f37ec2
+--- /dev/null
++++ b/src/styles/mascot.css
+@@ -0,0 +1,45 @@
++.taiji-idle {
++  position: relative;
++  display: block;
++}
++
++.taiji-idle > img,
++.taiji-idle > svg {
++  width: 100%;
++  height: 100%;
++  object-fit: contain;
++}
++
++.taiji-idle > svg {
++  position: absolute;
++  inset: 0;
++  pointer-events: none;
++}
++
++.mascot-option .taiji-idle {
++  width: 64px;
++  height: 64px;
++}
++
++.taiji-idle-eyes {
++  opacity: 0;
++  animation: taiji-eye-blink 5s infinite;
++}
++
++@keyframes taiji-eye-blink {
++  0%,
++  92%,
++  100% {
++    opacity: 0;
++  }
++  94%,
++  96% {
++    opacity: 1;
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .taiji-idle-eyes {
++    animation: none;
++  }
++}
+diff --git a/src/components/MascotImage.test.tsx b/src/components/MascotImage.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..6611dc7a2c1f57e7ff2b3bf8feea55d7bd242175
+--- /dev/null
++++ b/src/components/MascotImage.test.tsx
+@@ -0,0 +1,41 @@
++// @vitest-environment jsdom
++import "@testing-library/jest-dom/vitest";
++import { cleanup, render, screen } from "@testing-library/react";
++import { afterEach, describe, expect, it } from "vitest";
++import MascotImage from "./MascotImage";
++
++afterEach(cleanup);
++describe("Taiji default idle animation", () => {
++  it("uses a static body with a separate eye overlay", () => {
++    const { container } = render(
++      <MascotImage src="/mascots/taiji-bot/idle.webp" />,
++    );
++    expect(screen.getByRole("img", { name: "太极机器人" })).toHaveAttribute(
++      "src",
++      "/mascots/taiji-bot/idle.png",
++    );
++    expect(container.querySelector(".taiji-idle-eyes")).toBeInTheDocument();
++    expect(container.querySelectorAll("img")).toHaveLength(1);
++  });
++  it("preserves other task animations", () => {
++    const { container } = render(
++      <MascotImage
++        src="/mascots/taiji-bot/idle.webp"
++        animationState="working"
++      />,
++    );
++    expect(screen.getByRole("img")).toHaveAttribute(
++      "src",
++      "/mascots/taiji-bot/working.webp",
++    );
++    expect(container.querySelector(".taiji-idle-eyes")).toBeNull();
++  });
++  it("preserves the other mascot", () => {
++    const { container } = render(<MascotImage src="/mascots/peek.webp" />);
++    expect(screen.getByRole("img")).toHaveAttribute(
++      "src",
++      "/mascots/peek.webp",
++    );
++    expect(container.querySelector(".taiji-idle-eyes")).toBeNull();
++  });
++});

@@ -2,11 +2,13 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import "./App.css";
+import { APP_NAME } from "./lib/brand";
 import { getWindowLabel } from "./lib/tauriWindowApi";
 import ChatWindow from "./windows/ChatWindow";
 import PetWindow from "./windows/PetWindow";
 import SettingsWindow from "./windows/SettingsWindow";
 
+document.title = APP_NAME;
 const label = getWindowLabel();
 document.documentElement.dataset.windowLabel = label;
 

@@ -1,0 +1,270 @@
+diff --git a/components/manager.py b/components/manager.py
+index f90a247fa2f05c2272f11482f25932ab5012bd17..4cad46d252a577261d680e5c098d5902094bfd82 100644
+--- a/components/manager.py
++++ b/components/manager.py
+@@ -124,6 +124,7 @@ def inspect(self, component_id: str) -> dict[str, Any]:
+             "entry": str(entry),
+             "path": str(version_dir),
+             "launchable": metadata.get("launchable") is True,
++            "protocol": str(metadata.get("protocol") or ""),
+             "can_rollback": isinstance(current.get("previous"), dict),
+             "settings": metadata.get("settings") if isinstance(metadata.get("settings"), list) else [],
+         }
+diff --git a/components/operations.py b/components/operations.py
+index ac792a0999eb51586c2b0648fcb95fb385946eba..27e13caacba1a8accb480078643ca830cb233bf7 100644
+--- a/components/operations.py
++++ b/components/operations.py
+@@ -107,7 +107,9 @@ def update_catalog_component_configuration(
+     return save_component_configuration(component_id, values)
+ 
+ 
+-def launch_catalog_component(component_id: str, *, manager: ComponentManager | None = None) -> dict[str, Any]:
++def launch_catalog_component(
++    component_id: str, *, manager: ComponentManager | None = None, show: bool = True,
++) -> dict[str, Any]:
+     """Open a verified installed application entry without shell interpretation."""
+     import os
+     import subprocess
+@@ -122,9 +124,59 @@ def launch_catalog_component(component_id: str, *, manager: ComponentManager | N
+     entry.relative_to(root)
+     if os.name != "nt" or entry.suffix.casefold() != ".exe":
+         raise ValueError("当前仅支持 Windows 应用组件")
++    if installed.get("protocol") == "octoppet-component@1":
++        import json
++
++        value = {}
++        for command in (["start", "show"] if show else ["start"]):
++            try:
++                result = subprocess.run(
++                    [str(entry), command, "--json", "--timeout-ms", "15000"],
++                    cwd=root, stdin=subprocess.DEVNULL, capture_output=True,
++                    encoding="utf-8", timeout=17,
++                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
++                )
++            except subprocess.TimeoutExpired as exc:
++                raise ValueError("桌宠启动超时，请稍后重试") from exc
++            try:
++                value = json.loads(result.stdout)
++            except ValueError as exc:
++                raise ValueError("桌宠未返回有效启动结果") from exc
++            if not isinstance(value, dict) or value.get("protocol") != installed["protocol"] or value.get("id") != component_id or value.get("version") != installed.get("version"):
++                raise ValueError("桌宠运行协议、标识或版本不匹配")
++            if result.returncode != 0 or value.get("ok") is not True:
++                raise ValueError(str((value.get("error") or {}).get("message") or "桌宠未能启动"))
++            if value.get("running") is not True or not isinstance(value.get("pid"), int) or value["pid"] <= 0:
++                raise ValueError("桌宠未返回运行中的实例")
++        return {"component_id": component_id, "pid": value["pid"]}
++
+     process = subprocess.Popen(
+         [str(entry)], cwd=root, stdin=subprocess.DEVNULL,
+         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+     )
+     return {"component_id": component_id, "pid": process.pid}
++
++
++def start_enabled_catalog_components(
++    manager: ComponentManager | None = None,
++) -> tuple[dict[str, Any], ...]:
++    """Use local verified catalog only; start applications explicitly opted in by the user."""
++    from .configuration import stored_component_setting
++
++    results = []
++    for row in component_rows(manager):
++        installation = row.get("installation") or {}
++        if installation.get("status") != "installed" or not installation.get("launchable") or not row.get("platform_supported"):
++            continue
++        if not any(item.get("key") == "start_with_helper" and item.get("value_type") == "boolean" for item in row.get("settings") or ()):
++            continue
++        component_id = row["component_id"]
++        if stored_component_setting(component_id, "start_with_helper", False) is not True:
++            continue
++        try:
++            launch_catalog_component(component_id, manager=manager, show=False)
++            results.append({"component_id": component_id, "name": row["name"], "error": ""})
++        except Exception as exc:
++            results.append({"component_id": component_id, "name": row["name"], "error": str(exc)})
++    return tuple(results)
+diff --git a/gui/main_window.py b/gui/main_window.py
+index a43a0e0fc99163546c9b36777d94965c717ebaaa..4f6717c5d47262cd398a0cb4fd3be8a2570047d2 100644
+--- a/gui/main_window.py
++++ b/gui/main_window.py
+@@ -297,9 +297,28 @@ def __init__(self, root: tk.Tk, open_help_center: bool = False) -> None:
+                 name="component-launcher-start",
+                 daemon=True,
+             ).start()
++            self.root.after(300, self._start_enabled_components)
+         if open_help_center:
+             self.root.after(300, self._open_help_center)
+ 
++    def _start_enabled_components(self) -> None:
++        from components.operations import start_enabled_catalog_components
++
++        def worker() -> None:
++            try:
++                results = start_enabled_catalog_components()
++                failures = [f"{item['name']}：{item['error']}" for item in results if item["error"]]
++                message = "组件联动启动失败：" + "；".join(failures) if failures else ""
++            except Exception as exc:
++                message = f"组件联动启动失败：{exc}"
++            if message:
++                try:
++                    self.root.after(0, lambda: self.status_text.set(message))
++                except (RuntimeError, tk.TclError):
++                    pass  # Main window may close while startup is in progress.
++
++        threading.Thread(target=worker, name="component-application-start", daemon=True).start()
++
+     def _build(self) -> None:
+         menu_style = {
+             "bg": "#f1f1ee",
+@@ -2526,12 +2545,24 @@ def uninstall_selected() -> None:
+             )
+ 
+         def open_selected() -> None:
++            if self._busy:
++                status_text.set("正在处理其他操作，请稍后重试")
++                return
+             row = selected_row()
+-            try:
+-                launch_catalog_component(str(row.get("component_id") or ""), manager=manager)
+-                status_text.set("组件已打开")
+-            except Exception as error:
+-                status_text.set(f"打开组件失败：{error}")
++            status_text.set("正在打开组件…")
++            open_button.configure(state="disabled")
++
++            def opened(_result, error) -> None:
++                self._busy = False
++                if not dialog.winfo_exists():
++                    return
++                update_actions()
++                status_text.set(f"打开组件失败：{error}" if error else "组件已打开")
++
++            self._run_async(
++                lambda: launch_catalog_component(str(row.get("component_id") or ""), manager=manager),
++                opened,
++            )
+ 
+         def external_catalog_refreshed(_result, error) -> None:
+             self._busy = False
+diff --git a/tests/test_component_application_startup.py b/tests/test_component_application_startup.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c65c9901b722e590655c69e6ce91b8cf2d055af7
+--- /dev/null
++++ b/tests/test_component_application_startup.py
+@@ -0,0 +1,114 @@
++from __future__ import annotations
++
++import json
++import subprocess
++import tempfile
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++from components.operations import launch_catalog_component, start_enabled_catalog_components
++from components import configuration
++
++
++class PetLifecycleTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.row = {
++            "component_id": "octoppet", "name": "Paldee Pet", "required_capabilities": [],
++            "platform_supported": True,
++            "settings": [{"key": "start_with_helper", "value_type": "boolean"}],
++            "installation": {"status": "installed", "launchable": True,
++                "path": str(self.root), "entry": str(self.root / "paldee-pet.exe"),
++                "protocol": "octoppet-component@1", "version": "0.2.2"},
++        }
++        self.value = {"protocol": "octoppet-component@1", "id": "octoppet", "version": "0.2.2",
++                      "ok": True, "running": True, "pid": 123}
++
++    def result(self, value=None, code=0):
++        return subprocess.CompletedProcess([], code, stdout=json.dumps(value or self.value), stderr="")
++
++    def test_open_uses_start_and_show_fixed_json_commands(self):
++        with patch("components.operations.component_row", return_value=self.row), patch("subprocess.run", return_value=self.result()) as run:
++            result = launch_catalog_component("octoppet")
++        self.assertEqual(result["pid"], 123)
++        self.assertEqual([call.args[0][1] for call in run.call_args_list], ["start", "show"])
++        self.assertEqual(run.call_args.args[0][0], str(self.root / "paldee-pet.exe"))
++        self.assertNotIn("shell", run.call_args.kwargs)
++        self.assertEqual(run.call_args.kwargs["timeout"], 17)
++
++    def test_background_start_does_not_show_hidden_existing_pet(self):
++        with patch("components.operations.component_row", return_value=self.row), patch("subprocess.run", return_value=self.result()) as run:
++            launch_catalog_component("octoppet", show=False)
++        self.assertEqual(run.call_count, 1)
++        self.assertEqual(run.call_args.args[0][1], "start")
++
++    def test_failure_is_reported_and_show_is_not_called(self):
++        value = dict(self.value, ok=False, error={"message": "WebView2 unavailable"})
++        with patch("components.operations.component_row", return_value=self.row), patch("subprocess.run", return_value=self.result(value, 6)) as run:
++            with self.assertRaisesRegex(ValueError, "WebView2 unavailable"):
++                launch_catalog_component("octoppet")
++        self.assertEqual(run.call_count, 1)
++
++    def test_wrong_protocol_and_version_are_rejected(self):
++        for key in ["protocol", "version", "id"]:
++            with self.subTest(key=key), patch("components.operations.component_row", return_value=self.row), patch("subprocess.run", return_value=self.result(dict(self.value, **{key: "wrong"}))):
++                with self.assertRaisesRegex(ValueError, "不匹配"):
++                    launch_catalog_component("octoppet")
++
++    def test_timeout_does_not_freeze_caller_indefinitely(self):
++        with patch("components.operations.component_row", return_value=self.row), patch("subprocess.run", side_effect=subprocess.TimeoutExpired("pet", 17)):
++            with self.assertRaisesRegex(ValueError, "超时"):
++                launch_catalog_component("octoppet")
++
++    def test_no_opt_in_means_no_start_and_no_config_write(self):
++        with patch("components.operations.component_rows", return_value=(self.row,)), patch.object(configuration, "SETTINGS_ROOT", self.root / "settings"), patch("components.operations.launch_catalog_component") as launch:
++            self.assertEqual(start_enabled_catalog_components(), ())
++        launch.assert_not_called()
++        self.assertFalse((self.root / "settings").exists())
++
++    def test_saved_opt_in_starts_once_without_forcing_show(self):
++        with patch.object(configuration, "SETTINGS_ROOT", self.root):
++            (self.root / "octoppet.json").write_text('{"start_with_helper": true}', encoding="utf-8")
++            with patch("components.operations.component_rows", return_value=(self.row,)), patch("components.operations.launch_catalog_component") as launch:
++                result = start_enabled_catalog_components()
++        launch.assert_called_once_with("octoppet", manager=None, show=False)
++        self.assertEqual(result[0]["error"], "")
++
++    def test_disabled_or_corrupt_saved_preference_never_starts(self):
++        for content in ['{"start_with_helper": false}', '{"start_with_helper": "true"}', 'invalid']:
++            with self.subTest(content=content), patch.object(configuration, "SETTINGS_ROOT", self.root):
++                (self.root / "octoppet.json").write_text(content, encoding="utf-8")
++                with patch("components.operations.component_rows", return_value=(self.row,)), patch("components.operations.launch_catalog_component") as launch:
++                    self.assertEqual(start_enabled_catalog_components(), ())
++                launch.assert_not_called()
++
++    def test_uninstalled_unsupported_and_non_application_are_skipped(self):
++        for change in [{"platform_supported": False}, {"settings": []}, {"installation": dict(self.row["installation"], status="not_installed")}, {"installation": dict(self.row["installation"], launchable=False)}]:
++            with self.subTest(change=change), patch("components.operations.component_rows", return_value=(dict(self.row, **change),)), patch("components.operations.launch_catalog_component") as launch:
++                self.assertEqual(start_enabled_catalog_components(), ())
++            launch.assert_not_called()
++
++    def test_startup_failure_does_not_abort_other_components(self):
++        other = dict(self.row, component_id="another-pet", name="Other")
++        with patch("components.operations.component_rows", return_value=(self.row, other)), patch.object(configuration, "stored_component_setting", return_value=True), patch("components.operations.launch_catalog_component", side_effect=[ValueError("missing runtime"), {"pid": 1}]):
++            result = start_enabled_catalog_components()
++        self.assertEqual(result[0]["error"], "missing runtime")
++        self.assertEqual(result[1]["error"], "")
++
++    def test_setting_uses_existing_validated_store_and_survives_version_change(self):
++        definitions = configuration.component_setting_definitions([{
++            "key": "start_with_helper", "name": "随“屏幕自动化小助手”启动", "value_type": "boolean", "default": False,
++        }])
++        with patch.object(configuration, "SETTINGS_ROOT", self.root), patch.object(configuration, "_installed_definitions", return_value=definitions):
++            self.assertFalse(configuration.component_configuration("octoppet")["values"]["start_with_helper"])
++            saved = configuration.save_component_configuration("octoppet", {"start_with_helper": True})
++            self.assertTrue(saved["values"]["start_with_helper"])
++            self.assertFalse(saved["restart_required"])
++            self.assertTrue(configuration.component_configuration("octoppet")["values"]["start_with_helper"])
++
++
++if __name__ == "__main__":
++    unittest.main()

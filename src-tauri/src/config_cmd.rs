@@ -3,7 +3,9 @@ use std::{collections::HashMap, fs, path::Path, sync::Mutex};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(windows))]
+use tauri::Manager;
 
 const CONFIG_FILE_NAME: &str = "config.json";
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -127,6 +129,12 @@ pub fn patch_at_path(path: &Path, patch: Value) -> Result<AppConfig, String> {
 }
 
 fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let _ = app;
+        Ok(crate::component_runtime::data_dir()?.join(CONFIG_FILE_NAME))
+    }
+    #[cfg(not(windows))]
     app.path()
         .app_config_dir()
         .map(|path| path.join(CONFIG_FILE_NAME))

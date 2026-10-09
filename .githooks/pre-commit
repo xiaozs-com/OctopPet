@@ -19,7 +19,15 @@ while IFS= read -r line; do
 done < <(git diff --cached --name-only --diff-filter=ACMR || true)
 
 echo "[pre-commit] make all  (format-all + lint + typecheck + test)"
-make all
+if command -v make >/dev/null 2>&1; then
+  make all
+elif [[ "${OS:-}" == "Windows_NT" ]] && command -v powershell.exe >/dev/null 2>&1; then
+  echo "[pre-commit] Windows equivalent: scripts/check-windows.ps1"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows.ps1
+else
+  echo "[pre-commit] make is required on this platform" >&2
+  exit 1
+fi
 
 if ((${#STAGED_FILES[@]} > 0)); then
   existing=()

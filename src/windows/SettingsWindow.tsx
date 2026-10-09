@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { APP_NAME } from "../lib/brand";
 import ShortcutRecorder from "../components/ShortcutRecorder";
 import WindowCloseButton from "../components/WindowCloseButton";
 import {
@@ -476,7 +477,7 @@ export default function SettingsWindow() {
             <div className="settings-rows settings-about">
               <div className="settings-row">
                 <span>应用</span>
-                <span>OctopPet</span>
+                <span>{APP_NAME}</span>
               </div>
               <div className="settings-row">
                 <span>版本</span>

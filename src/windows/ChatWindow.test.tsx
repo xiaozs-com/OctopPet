@@ -21,6 +21,7 @@ import { OctopHttpError } from "../lib/octopHttp";
 import ChatWindow from "./ChatWindow";
 
 const mocks = vi.hoisted(() => ({
+  pdExecuteCli: vi.fn(),
   loadConfig: vi.fn(),
   patchConfig: vi.fn(),
   getSecret: vi.fn(),
@@ -56,6 +57,7 @@ vi.mock("../lib/tauriWindowApi", () => ({
 
 vi.mock("../lib/tauriApi", () => ({
   tauriApi: {
+    pdExecuteCli: mocks.pdExecuteCli,
     loadConfig: mocks.loadConfig,
     patchConfig: mocks.patchConfig,
     getSecret: mocks.getSecret,
@@ -84,6 +86,9 @@ vi.mock("../lib/octopHttp", async (importOriginal) => {
 });
 
 class FakeWebSocket {
+  static OPEN = 1;
+  static CONNECTING = 0;
+  static CLOSED = 3;
   static instances: FakeWebSocket[] = [];
   readyState: number = WebSocket.CONNECTING;
   sent: string[] = [];
@@ -123,6 +128,7 @@ describe("ChatWindow", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   beforeEach(() => {
@@ -169,6 +175,85 @@ describe("ChatWindow", () => {
       workspacePath: "inbound/a.png",
       url: "https://octop.example/inbound/a.png",
     });
+  });
+
+  it.each(["http://47.77.184.54:8088", "https://octop.example"])(
+    "在原聊天连接 %s 回传 PD 查询，并继续接收 AI 回复",
+    async (baseUrl) => {
+      mocks.loadConfig.mockResolvedValue({
+        ...DEFAULT_APP_CONFIG,
+        baseUrl,
+        username: "juba",
+        threadIdByAgent: {},
+      });
+      mocks.pdExecuteCli.mockResolvedValue({
+        ok: true,
+        windows: [{ title: "测试窗口" }],
+      });
+      render(<ChatWindow />);
+      await screen.findByRole("region", { name: "暂无消息" });
+      fireEvent.change(screen.getByLabelText("消息"), {
+        target: { value: "我的电脑上有哪些窗口" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+      await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+      const socket = FakeWebSocket.instances[0];
+      socket.open();
+      expect(JSON.parse(socket.sent[0]).pd_bridge).toEqual({
+        protocol: "pd-chat-cli@2",
+        operations: ["helper.cli"],
+      });
+      socket.message({
+        type: "pd_cli_request",
+        protocol: "pd-chat-cli@2",
+        id: "b".repeat(32),
+        thread_id: "new-thread",
+        method: "helper.cli",
+        args: ["cli", "window", "list-visible"],
+      });
+      await waitFor(() => expect(socket.sent).toHaveLength(2));
+      expect(JSON.parse(socket.sent[1])).toMatchObject({
+        type: "pd_cli_result",
+        thread_id: "new-thread",
+        result: { ok: true, windows: [{ title: "测试窗口" }] },
+      });
+      expect(mocks.pdExecuteCli).toHaveBeenCalledTimes(1);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      socket.message({ type: "token", content: "找到了测试窗口" });
+      socket.message({ type: "done" });
+      expect(await screen.findByText("找到了测试窗口")).toBeInTheDocument();
+    },
+  );
+
+  it("本机小助手不可用时在聊天中显示具体错误", async () => {
+    mocks.pdExecuteCli.mockRejectedValue("未找到已安装的小助手");
+    render(<ChatWindow />);
+    await screen.findByRole("region", { name: "暂无消息" });
+    fireEvent.change(screen.getByLabelText("消息"), {
+      target: { value: "激活窗口" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message({
+      type: "pd_cli_request",
+      protocol: "pd-chat-cli@2",
+      id: "c".repeat(32),
+      thread_id: "new-thread",
+      method: "helper.cli",
+      args: ["cli", "window", "activate", "--handle", "123"],
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "未找到已安装的小助手",
+    );
+    expect(mocks.pdExecuteCli).toHaveBeenCalledWith([
+      "cli",
+      "window",
+      "activate",
+      "--handle",
+      "123",
+    ]);
   });
 
   it("紧凑窗口使用更高的初始高度，并允许缩放", async () => {

@@ -1,11 +1,10 @@
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{collections::HashMap, fs, path::Path, sync::Mutex};
 
-use tauri::{AppHandle, Manager};
+#[cfg(debug_assertions)]
+use std::path::PathBuf;
+use tauri::AppHandle;
+#[cfg(all(debug_assertions, not(windows)))]
+use tauri::Manager;
 
 use crate::config_cmd;
 
@@ -14,6 +13,7 @@ use keyring::{Entry, Error};
 
 #[cfg(not(debug_assertions))]
 const KEYRING_SERVICE: &str = "com.octop.pet";
+#[cfg(debug_assertions)]
 const DEV_SECRETS_FILE: &str = "dev-secrets.json";
 static SECRETS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -87,6 +87,12 @@ pub fn delete_secret_from_file(path: &Path, account: &str) -> Result<(), String>
 
 #[cfg(debug_assertions)]
 fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let _ = app;
+        Ok(crate::component_runtime::data_dir()?.join(DEV_SECRETS_FILE))
+    }
+    #[cfg(not(windows))]
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(DEV_SECRETS_FILE))
@@ -114,6 +120,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
         return Ok(None);
     }
     let account = secret_account(&username, &key)?;
+    #[cfg(not(debug_assertions))]
+    let _ = &account;
 
     #[cfg(debug_assertions)]
     {
@@ -132,6 +140,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
 pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> {
     let username = config_cmd::load_config(app.clone())?.username;
     let account = secret_account(&username, &key)?;
+    #[cfg(not(debug_assertions))]
+    let _ = &account;
 
     #[cfg(debug_assertions)]
     {
@@ -148,6 +158,8 @@ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), Stri
 pub fn delete_secret(app: AppHandle, key: String) -> Result<(), String> {
     let username = config_cmd::load_config(app.clone())?.username;
     let account = secret_account(&username, &key)?;
+    #[cfg(not(debug_assertions))]
+    let _ = &account;
 
     #[cfg(debug_assertions)]
     {

@@ -1,0 +1,13 @@
+{
+  "baselineCommit": "385d26138871a32f3d821e6128672d47cf94ba0f",
+  "workingHead": "53b675dd424a372accfb1ea98ddcadbce9ab1813",
+  "purpose": "Taiji idle eye-only UI animation",
+  "patchSha256": "7651b5c883b99cb84fe0a6c54602dad8d63f579212bfe106cdf25e19dd186217",
+  "snapshotSource": "worktree",
+  "files": {
+    "src/components/MascotImage.tsx": "e149a9c5b1630519fff1164077b9d03d1659d9c56efe4845c87bb0c716f4ee7a",
+    "public/mascots/taiji-bot/README.md": "ae98ad5d53643511e287db9c17186f31a5bc7a0ca88fa3cb0dc1d2d309fb557d",
+    "src/styles/mascot.css": "3e0250f9e16958e920846ed724eee0aca89a59b62bcd1fcd4d3ae129f5030afd",
+    "src/components/MascotImage.test.tsx": "d883a5b9f87265a830bcd5f272725836264f830a8b9d40ba7cf18e768dc9c090"
+  }
+}

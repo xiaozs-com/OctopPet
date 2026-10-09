@@ -1,0 +1,17 @@
+{
+  "baselineCommit": "385d26138871a32f3d821e6128672d47cf94ba0f",
+  "workingHead": "53b675dd424a372accfb1ea98ddcadbce9ab1813",
+  "purpose": "PD bridge; Taiji visual source changes are in separate snapshots",
+  "patchSha256": "1151a0fac59af843cf44a1abd2fe1dda464c86cff17d01d0fb855a3dffa2cdcc",
+  "snapshotSource": "worktree",
+  "files": {
+    "CHANGELOG.md": "d727da5e5f41609d091031855311b013cd3877f4f9c137ca7b8e7af8fb5eb3b1",
+    "src-tauri/src/lib.rs": "fc5c753c89ab161470cdb10c221a14baa20bb312e0f4301f0b8cd16fdc26e231",
+    "src/hooks/useChatController.ts": "d1a4adf66a74f0eba88135879cbe19b483e2d9bb3f8ca1a8eeb30548459bffe9",
+    "src/lib/tauriApi.ts": "c741a55d34892bf139935f9681150516b95e10b2ce48ebf4bdba954a6b08d6df",
+    "src/windows/ChatWindow.test.tsx": "3cbd955ebcdc99712d9eac86a759dd4d00083fb945b066a3728a422721081fc2",
+    "src-tauri/src/pd_bridge_cmd.rs": "347b7931a092e03925ebb60ae47398edec6a67b71284fdef98a81ee34589c6ec",
+    "src/lib/pdChatBridge.ts": "446ee241b5b789d9665b54e98be004f8b32ba693032598eb4c28c5a213262e71",
+    "src/lib/pdChatBridge.test.ts": "18d4801e1ff1c75224fe53a3e164646edbca89f7d19e06bb51de14e74c1331b3"
+  }
+}

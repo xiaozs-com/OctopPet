@@ -1,0 +1,143 @@
+diff --git a/components/manager.py b/components/manager.py
+--- a/components/manager.py
++++ b/components/manager.py
+@@ -123,6 +123,7 @@
+             "version": current["version"],
+             "entry": str(entry),
+             "path": str(version_dir),
++            "launchable": metadata.get("launchable") is True,
+             "can_rollback": isinstance(current.get("previous"), dict),
+             "settings": metadata.get("settings") if isinstance(metadata.get("settings"), list) else [],
+         }
+diff --git a/components/operations.py b/components/operations.py
+--- a/components/operations.py
++++ b/components/operations.py
+@@ -105,3 +105,26 @@
+ ) -> dict[str, Any]:
+     component_definition(component_id)
+     return save_component_configuration(component_id, values)
++
++
++def launch_catalog_component(component_id: str, *, manager: ComponentManager | None = None) -> dict[str, Any]:
++    """Open a verified installed application entry without shell interpretation."""
++    import os
++    import subprocess
++
++    row = component_row(component_id, manager)
++    _require_component_capabilities(row)
++    installed = row.get("installation") or {}
++    if installed.get("status") != "installed" or not installed.get("launchable"):
++        raise ValueError("该组件没有可打开的应用入口")
++    root = Path(installed["path"]).resolve()
++    entry = Path(installed["entry"]).resolve()
++    entry.relative_to(root)
++    if os.name != "nt" or entry.suffix.casefold() != ".exe":
++        raise ValueError("当前仅支持 Windows 应用组件")
++    process = subprocess.Popen(
++        [str(entry)], cwd=root, stdin=subprocess.DEVNULL,
++        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
++        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
++    )
++    return {"component_id": component_id, "pid": process.pid}
+diff --git a/gui/main_window.py b/gui/main_window.py
+--- a/gui/main_window.py
++++ b/gui/main_window.py
+@@ -2148,6 +2148,7 @@
+         from components.external_catalog import refresh_external_catalog
+         from components.operations import (
+             check_catalog_component_update,
++            launch_catalog_component,
+             read_catalog_component_configuration,
+             update_catalog_component_configuration,
+         )
+@@ -2352,6 +2353,9 @@
+             uninstall_button.configure(
+                 state="normal" if actions.get("uninstall") else "disabled",
+             )
++            open_button.configure(
++                state="normal" if installed and (row.get("installation") or {}).get("launchable") else "disabled",
++            )
+             render_configuration(row)
+             if row and not installed and not row.get("manifest_source"):
+                 status_text.set("安装包尚未发布；当前窗口用于确认组件形态和生命周期。")
+@@ -2521,6 +2525,14 @@
+                 operation_done,
+             )
+ 
++        def open_selected() -> None:
++            row = selected_row()
++            try:
++                launch_catalog_component(str(row.get("component_id") or ""), manager=manager)
++                status_text.set("组件已打开")
++            except Exception as error:
++                status_text.set(f"打开组件失败：{error}")
++
+         def external_catalog_refreshed(_result, error) -> None:
+             self._busy = False
+             if not dialog.winfo_exists():
+@@ -2547,6 +2559,8 @@
+         ttk.Button(buttons, text="重新检测", command=refresh_external_catalog_now).pack(side="left")
+         install_button = ttk.Button(buttons, text="在线安装", command=install_selected)
+         install_button.pack(side="left", padx=(8, 0))
++        open_button = ttk.Button(buttons, text="打开", command=open_selected, state="disabled")
++        open_button.pack(side="left", padx=(8, 0))
+         uninstall_button = ttk.Button(buttons, text="卸载", command=uninstall_selected)
+         uninstall_button.pack(side="left", padx=(8, 0))
+         close_button = ttk.Button(buttons, text="关闭", command=dialog.destroy)
+diff --git a/tests/test_component_application_launch.py b/tests/test_component_application_launch.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_component_application_launch.py
+@@ -0,0 +1,52 @@
++from __future__ import annotations
++
++import tempfile
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++from components.operations import launch_catalog_component
++
++
++class ComponentApplicationLaunchTests(unittest.TestCase):
++    def row(self, root, *, launchable=True):
++        return {"component_id": "pd-device-bridge", "required_capabilities": [],
++                "installation": {"status": "installed", "launchable": launchable,
++                                 "path": str(root), "entry": str(root / "OctopPet.exe")}}
++
++    @patch("components.operations.component_row")
++    @patch("subprocess.Popen")
++    def test_launches_fixed_entry_without_shell(self, spawn, row):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            row.return_value = self.row(root)
++            spawn.return_value.pid = 123
++            with patch("os.name", "nt"):
++                result = launch_catalog_component("pd-device-bridge")
++            self.assertEqual(result["pid"], 123)
++            self.assertEqual(spawn.call_args.args[0], [str(root / "OctopPet.exe")])
++            self.assertNotIn("shell", spawn.call_args.kwargs)
++
++    @patch("components.operations.component_row")
++    @patch("subprocess.Popen")
++    def test_non_application_cannot_be_opened(self, spawn, row):
++        row.return_value = self.row(Path("."), launchable=False)
++        with self.assertRaisesRegex(ValueError, "应用入口"):
++            launch_catalog_component("pd-device-bridge")
++        spawn.assert_not_called()
++
++    @patch("components.operations.component_row")
++    @patch("subprocess.Popen")
++    def test_entry_cannot_escape_component_directory(self, spawn, row):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary) / "component"
++            value = self.row(root)
++            value["installation"]["entry"] = str(root.parent / "unrelated.exe")
++            row.return_value = value
++            with self.assertRaises(ValueError):
++                launch_catalog_component("pd-device-bridge")
++        spawn.assert_not_called()
++
++
++if __name__ == "__main__":
++    unittest.main()
