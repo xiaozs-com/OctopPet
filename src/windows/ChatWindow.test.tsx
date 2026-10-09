@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   deleteSecret: vi.fn(),
   listenAuthUpdated: vi.fn(),
   listenChatShown: vi.fn(),
+  emitPetState: vi.fn(),
   showSettings: vi.fn(),
   placeWindowBottomCenter: vi.fn(),
   listAgents: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("../lib/tauriApi", () => ({
     deleteSecret: mocks.deleteSecret,
     listenAuthUpdated: mocks.listenAuthUpdated,
     listenChatShown: mocks.listenChatShown,
+    emitPetState: mocks.emitPetState,
     showSettings: mocks.showSettings,
     placeWindowBottomCenter: mocks.placeWindowBottomCenter,
   },
@@ -141,6 +143,7 @@ describe("ChatWindow", () => {
     mocks.deleteSecret.mockResolvedValue(undefined);
     mocks.listenAuthUpdated.mockResolvedValue(vi.fn());
     mocks.listenChatShown.mockResolvedValue(vi.fn());
+    mocks.emitPetState.mockResolvedValue(undefined);
     mocks.showSettings.mockResolvedValue(undefined);
     mocks.placeWindowBottomCenter.mockResolvedValue(undefined);
     mocks.listAgents.mockResolvedValue([

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   hidePet: vi.fn(),
   openHome: vi.fn(),
   listenMascotChanged: vi.fn(),
+  listenPetState: vi.fn(),
   clearPetWebviewChrome: vi.fn(),
   setPetWebviewPosition: vi.fn(),
   startPetWebviewDrag: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../lib/tauriApi", () => ({
     hidePet: mocks.hidePet,
     openHome: mocks.openHome,
     listenMascotChanged: mocks.listenMascotChanged,
+    listenPetState: mocks.listenPetState,
   },
 }));
 
@@ -82,6 +84,7 @@ describe("PetWindow", () => {
     mocks.hidePet.mockResolvedValue(undefined);
     mocks.openHome.mockResolvedValue(undefined);
     mocks.listenMascotChanged.mockResolvedValue(vi.fn());
+    mocks.listenPetState.mockResolvedValue(vi.fn());
     mocks.clearPetWebviewChrome.mockResolvedValue(undefined);
     mocks.setPetWebviewPosition.mockResolvedValue(undefined);
     mocks.startPetWebviewDrag.mockResolvedValue(undefined);

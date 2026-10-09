@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import MascotImage from "../components/MascotImage";
 import { DEFAULT_APP_CONFIG, MASCOT_SRC } from "../lib/configLogic";
+import type { TaijiAnimationState } from "../lib/mascotAnimation";
 import { showPetContextMenu } from "../lib/petContextMenu";
 import { tauriApi } from "../lib/tauriApi";
 import {
@@ -42,6 +43,7 @@ export default function PetWindow() {
   const [mascotId, setMascotId] = useState<MascotId>(
     DEFAULT_APP_CONFIG.mascotId,
   );
+  const [petState, setPetState] = useState<TaijiAnimationState>("idle");
   const configRef = useRef<AppConfig>(DEFAULT_APP_CONFIG);
   const pointerDownRef = useRef(false);
   const pointerStartRef = useRef({ x: 0, y: 0 });
@@ -100,6 +102,14 @@ export default function PetWindow() {
         })
         .then(registerUnlistener)
         .catch((error) => console.error("监听宠物切换失败", error));
+      if (disposed) return;
+
+      await tauriApi
+        .listenPetState((state) => {
+          setPetState(state);
+        })
+        .then(registerUnlistener)
+        .catch((error) => console.error("监听宠物状态失败", error));
       if (disposed) return;
 
       await onPetWebviewFocusChanged(() => {
@@ -393,7 +403,7 @@ export default function PetWindow() {
         );
       }}
     >
-      <MascotImage src={MASCOT_SRC[mascotId]} />
+      <MascotImage src={MASCOT_SRC[mascotId]} animationState={petState} />
       <button
         className="pet-resize-handle"
         type="button"
