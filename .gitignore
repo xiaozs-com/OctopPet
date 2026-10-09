@@ -79,3 +79,4 @@ venv/
 *.bak
 *.tmp
 .cache/
+build/component-release/

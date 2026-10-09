@@ -1,4 +1,8 @@
+> 2026-10-08：组件发布方案已按用户提供规范整改，当前以 [OctopPet 标准组件记录](../OCTOPPET_COMPONENT.md) 为准。本文中的 pd-device-bridge 宠物包 ID、全局目录合并和旧上传包仅为历史记录。
+
 # PD 扩展：原源码修改与上游同步记录
+
+当前日常同步请使用 [Paldee Pet 上游同步流程](PALDEE_SYNC.md)。下列基线表为历史记录，不代表当前 Git 状态。
 
 记录日期：2026-10-08。本文记录最终实现，更新时以实际源码、补丁和测试为准；之前的界面合并、SSH 隧道、独立窗口查询 Skill、强制 WSS、授权弹窗方案均已撤回。用户已报告桥接初测通过且组件启动问题解决；本文编写时未重新登录服务器核实部署状态。
 
@@ -225,3 +229,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows.ps
 在原太极素材提交之后，src/components/MascotImage.tsx 改为默认固定 idle.png 主体并以 SVG/CSS 仅眨眼，新增 src/styles/mascot.css 和 src/components/MascotImage.test.tsx。更新时除 385d261 素材提交外，还需迁移这三处改动、CHANGELOG 和素材说明。bridge.patch 不包含此独立视觉改动，见 snapshots/taiji-idle.patch。原 PNG/WebP 未编辑，不新增图片生成依赖。
 
 视觉补丁可用 python scripts/export_pd_bridge_patch.py --mascot 重新导出；上游同步后同样显式指定 --base。桥接和眨眼补丁互不覆盖生产文件；CHANGELOG 由桥接快照保存完整当前变更。
+
+## 10. 功能组件交付（2026-10-08）
+
+桥接源码已在本地提交 53b675d；385d261 继续作为桥接前的导出基线。眨眼和本次组件交付改动仍在工作区，未推送。Pet 安装和更新复用小助手的签名组件机制，详见 [组件交付记录](COMPONENT_RELEASE.md)。小助手仅补充通用应用启动入口，已独立保存任务补丁；以后 Pet 发新版不需要重复修改小助手源码。

@@ -1,0 +1,26 @@
+{
+  "note": "Task-only diff reconstructed by reversing the exact edits; LF-normalized fingerprints. Helper source has no Git baseline.",
+  "files": [
+    {
+      "file": "components/manager.py",
+      "before_normalized_sha256": "f3b6cb0bbbe48a646e19e5c4e6f6b220cce0c03d226afd35f031ff669865614c",
+      "after_normalized_sha256": "7bebb6d412ac710b92254ae39374fead696e66f207e3292359535f4ca59036dc"
+    },
+    {
+      "file": "components/operations.py",
+      "before_normalized_sha256": "97d33940aae52db3ab060b379cbbc44e69f564b0362fb618335f5816476f6343",
+      "after_normalized_sha256": "c7224636ac6535b0cc4f40931c9fb4a2849e2099e0318ee3150ba66921e8ac69"
+    },
+    {
+      "file": "gui/main_window.py",
+      "before_normalized_sha256": "775830c2cad1120a35127a51e5fcefc10054c1888282a0ea343dccc99a2925fe",
+      "after_normalized_sha256": "83f7810a9447f2c1c4a4a8245543ad4fdbec28090ba0c64c77684201d5ef1de3"
+    },
+    {
+      "file": "tests/test_component_application_launch.py",
+      "before_normalized_sha256": null,
+      "after_normalized_sha256": "ac66c215ada49422035120636bfeafdd01861feb2d3c70529be6c113d22d636e"
+    }
+  ],
+  "patch_sha256": "0f9b0fa35af632406b24a726cfecb8d85d8bb6cb1ba991ff4c82028fbab94c46"
+}

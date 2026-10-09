@@ -12,6 +12,8 @@
 
 ---
 
+**Paldee Pet** is based on OctopPet; original copyright and MIT license are retained. See [our upstream sync guide](docs/upstream-sync/PALDEE_SYNC.md) for fork maintenance.
+
 **Octop Pet** is a lightweight desktop client for a remote [Octop](https://github.com/TencentCloud/Octop) instance. It lives in the system tray, shows an always-on-top animated mascot on your desktop, and opens a compact chat window for streaming conversations with your agents.
 
 Octop remains the source of truth for agents, threads, and model replies. Octop Pet is a thin Tauri shell: HTTP login, agent list, thread resume, and WebSocket streaming against the same APIs the Octop dashboard uses.

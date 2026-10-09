@@ -35,6 +35,52 @@ beforeEach(() => {
   });
 });
 describe("PD bridge on the existing chat socket", () => {
+  it.each([
+    "workflow",
+    "memory",
+    "runs",
+    "components",
+    "file",
+    "agent",
+    "future-command",
+  ])("forwards complete helper CLI family %s", async (family) => {
+    const { socket, handle } = setup();
+    const args = ["cli", family, "--help"];
+    handle({ ...request, args });
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
+  });
+  it("passes stdin and files on the same socket and deduplicates the operation", async () => {
+    const { socket, handle } = setup();
+    const input = {
+      stdin: "中文 JSON",
+      uploads: [],
+      downloads: ["C:/test/source.py"],
+    };
+    const frame = { ...request, method: "helper.cli.io", input };
+    handle(frame);
+    handle(frame);
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(1);
+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(request.args, input);
+  });
+  it("executes more than eight completed commands on a persistent chat", async () => {
+    const { socket, handle } = setup();
+    for (let index = 0; index < 20; index++) {
+      handle({ ...request, id: index.toString(16).padStart(32, "0") });
+      await vi.waitFor(() =>
+        expect(socket.send).toHaveBeenCalledTimes(index + 1),
+      );
+    }
+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(20);
+  });
+  it("rejects malformed IO envelopes before invoking the helper", async () => {
+    const { socket, handle } = setup();
+    handle({ ...request, method: "helper.cli.io", input: { stdin: 123 } });
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
+    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
+  });
+
   it("read-only probes run without confirmation", async () => {
     const { handle } = setup();
     for (const [index, args] of [
@@ -113,11 +159,11 @@ describe("PD bridge on the existing chat socket", () => {
       expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
     },
   );
-  it("rejects operating-system commands and disabled CLI families", () => {
+  it("rejects invalid framing and operating-system entry points", () => {
     for (const args of [
       ["bash", "-c", "echo test"],
-      ["cli", "workflow", "run"],
-      ["cli", "access", "activate"],
+      ["powershell", "-Command", "run"],
+      ["cmd", "/c", "run"],
       ["cli", "screen", "bad\0"],
     ])
       expect(isPdCliArgs(args)).toBe(false);

@@ -1,0 +1,45 @@
+.taiji-idle {
+  position: relative;
+  display: block;
+}
+
+.taiji-idle > img,
+.taiji-idle > svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.taiji-idle > svg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mascot-option .taiji-idle {
+  width: 64px;
+  height: 64px;
+}
+
+.taiji-idle-eyes {
+  opacity: 0;
+  animation: taiji-eye-blink 5s infinite;
+}
+
+@keyframes taiji-eye-blink {
+  0%,
+  92%,
+  100% {
+    opacity: 0;
+  }
+  94%,
+  96% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .taiji-idle-eyes {
+    animation: none;
+  }
+}

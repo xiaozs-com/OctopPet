@@ -1,6 +1,6 @@
 [package]
 name = "octop-pet"
-version = "0.2.0"
+version = "0.2.3"
 description = "Desktop companion for a remote Octop instance"
 authors = ["you"]
 edition = "2021"
@@ -29,6 +29,8 @@ tauri-plugin-http = "2"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+tokio = { version = "1.53.1", features = ["rt", "net", "time", "io-util"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Console"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -1,3 +1,5 @@
+> 本仓库对外品牌为 **Paldee Pet**，基于 OctopPet，保留原作者版权和 MIT 许可证。维护者请参阅 [上游同步流程](docs/upstream-sync/PALDEE_SYNC.md)。
+
 <p align="center">
   <img src="assets/octop-app-icon.png" alt="Octop Pet" width="128" />
 </p>

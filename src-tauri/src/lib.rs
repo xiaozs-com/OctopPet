@@ -1,3 +1,5 @@
+#[cfg(windows)]
+pub mod component_runtime;
 pub mod config_cmd;
 pub mod pd_bridge_cmd;
 pub mod secrets_cmd;
@@ -6,6 +8,14 @@ pub mod window_cmd;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    let host = component_runtime::entry();
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(windows)]
+    for window in &mut context.config_mut().app.windows {
+        window.create = false;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -28,7 +38,16 @@ pub fn run() {
             }
             _ => {}
         })
-        .setup(|app| {
+        .setup(move |app| {
+            #[cfg(windows)]
+            {
+                let data_dir = component_runtime::data_dir()?;
+                for config in &app.config().app.windows {
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
+                        .data_directory(data_dir.join("webview"))
+                        .build()?;
+                }
+            }
             #[cfg(target_os = "macos")]
             {
                 // Desktop-pet style: stay out of Dock/Stage Manager focus fights
@@ -40,6 +59,8 @@ pub fn run() {
             window_cmd::ensure_dialog_windows_transparent(app.handle());
             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
             window_cmd::spawn_pet_transparency_watchdog(app.handle());
+            #[cfg(windows)]
+            host.serve(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -61,6 +82,6 @@ pub fn run() {
             window_cmd::apply_window_deactivate_policy,
             tray::reload_hotkeys,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

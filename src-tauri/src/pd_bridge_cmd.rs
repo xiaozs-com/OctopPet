@@ -1,7 +1,7 @@
-//! Thin adapter to the independently installed, read-only PD component.
+//! Thin adapter to the independently installed helper CLI transport.
 use serde_json::Value;
 use std::{
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -15,6 +15,25 @@ fn component_entry() -> Result<PathBuf, String> {
             return Ok(path);
         }
         return Err("开发组件路径无效".into());
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(directory) = exe.parent() {
+            let metadata_path = directory.join("component.json");
+            if metadata_path.is_file() {
+                let metadata: Value = serde_json::from_slice(
+                    &std::fs::read(metadata_path).map_err(|_| "宠物组件记录不可读")?,
+                )
+                .map_err(|_| "宠物组件记录无效")?;
+                if metadata["id"] != "octoppet" || metadata["protocol"] != "octoppet-component@1" {
+                    return Err("宠物组件协议不兼容".into());
+                }
+                let path = directory.join("pd-device-bridge.exe");
+                return path
+                    .is_file()
+                    .then_some(path)
+                    .ok_or("宠物包中的 CLI 桥接缺失".into());
+            }
+        }
     }
     let root = std::env::var_os("SCREEN_AUTOMATION_HOME")
         .map(PathBuf::from)
@@ -49,18 +68,37 @@ fn component_entry() -> Result<PathBuf, String> {
 pub async fn pd_execute_cli(
     window: tauri::WebviewWindow,
     args: Vec<String>,
+    input: Option<Value>,
 ) -> Result<Value, String> {
     if window.label() != "chat" {
-        return Err("本机查询仅允许从聊天窗口调用".into());
+        return Err("本机 CLI 仅允许从聊天窗口调用".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_cli_args(&args) {
-            return Err("此请求不属于已启用的小助手 CLI 范围".into());
+            return Err("CLI 参数格式无效".into());
         }
         let mut command = Command::new(component_entry()?);
-        command.args(&args);
+        let payload = if let Some(input) = input {
+            if !input.is_object() {
+                return Err("CLI 输入格式无效".into());
+            }
+            let bytes = serde_json::to_vec(&serde_json::json!({"args":args,"input":input}))
+                .map_err(|_| "CLI 输入序列化失败")?;
+            if bytes.len() > 8 * 1024 * 1024 {
+                return Err("CLI 输入超过 8 MiB".into());
+            }
+            command.arg("--request-json");
+            Some(bytes)
+        } else {
+            command.args(&args);
+            None
+        };
         command
-            .stdin(Stdio::null())
+            .stdin(if payload.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         #[cfg(windows)]
@@ -69,11 +107,15 @@ pub async fn pd_execute_cli(
             command.creation_flags(0x08000000);
         }
         let mut child = command.spawn().map_err(|_| "本机桥接组件启动失败")?;
+        let writer = payload.map(|bytes| {
+            let mut stdin = child.stdin.take().expect("piped CLI input");
+            std::thread::spawn(move || stdin.write_all(&bytes))
+        });
         let stdout = child.stdout.take().ok_or("本机输出不可用")?;
         let reader = std::thread::spawn(move || {
             let mut bytes = Vec::new();
             stdout
-                .take(8 * 1024 * 1024 + 1)
+                .take(16 * 1024 * 1024 + 1)
                 .read_to_end(&mut bytes)
                 .map(|_| bytes)
         });
@@ -87,22 +129,25 @@ pub async fn pd_execute_cli(
                 _ => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("本机查询超时".into());
+                    return Err("本机 CLI 调用超时".into());
                 }
             }
+        }
+        if let Some(writer) = writer {
+            let _ = writer.join();
         }
         let output = reader
             .join()
             .map_err(|_| "本机输出读取失败")?
             .map_err(|_| "本机输出读取失败")?;
-        if output.len() > 8 * 1024 * 1024 {
-            return Err("本机查询结果过大".into());
+        if output.len() > 16 * 1024 * 1024 {
+            return Err("本机 CLI 结果过大".into());
         }
         let result: Value = serde_json::from_slice(&output).map_err(|_| "本机桥接结果格式无效")?;
         Ok(result)
     })
     .await
-    .map_err(|_| "本机查询线程异常".to_string())?
+    .map_err(|_| "本机 CLI 线程异常".to_string())?
 }
 
 fn valid_version(version: &str) -> bool {
@@ -126,33 +171,31 @@ mod tests {
 }
 
 fn valid_cli_args(args: &[String]) -> bool {
-    if args.len() < 2
+    if args.is_empty()
         || args.len() > 128
         || !matches!(args[0].as_str(), "cli" | "browser")
         || args.iter().any(|a| a.len() > 4096 || a.contains('\0'))
     {
         return false;
     }
-    if args[0] == "browser" {
-        return true;
-    }
-    match args[1].as_str() {
-        "status" | "describe" | "capabilities" | "health" => args.len() == 2,
-        "access" => args.len() == 3 && args[2] == "list",
-        "window" | "screen" | "mouse" | "keyboard" | "ocr" | "browser" => args.len() >= 3,
-        _ => false,
-    }
+    true
 }
 
 #[cfg(test)]
 mod cli_tests {
     use super::valid_cli_args;
     #[test]
-    fn only_enabled_helper_cli_arguments_are_allowed() {
+    fn all_helper_subcommands_are_allowed() {
+        assert!(valid_cli_args(
+            &["cli", "workflow", "schema"].map(String::from)
+        ));
+        assert!(valid_cli_args(
+            &["cli", "future-command", "--help"].map(String::from)
+        ));
         for args in [
             vec!["bash", "-c", "run"],
-            vec!["cli", "workflow", "run"],
-            vec!["cli", "access", "activate"],
+            vec!["powershell", "-Command", "run"],
+            vec!["cmd", "/c", "run"],
         ] {
             assert!(!valid_cli_args(
                 &args.into_iter().map(String::from).collect::<Vec<_>>()

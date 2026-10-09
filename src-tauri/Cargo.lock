@@ -2653,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "octop-pet"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "keyring",
  "objc2",
@@ -2668,6 +2668,8 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-http",
  "tauri-plugin-opener",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

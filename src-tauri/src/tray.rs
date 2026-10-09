@@ -175,6 +175,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
     let tray = TrayIconBuilder::new()
         .icon(icon)
         .icon_as_template(true)
+        .tooltip(app.config().product_name.as_deref().unwrap_or_default())
         .menu(&menu)
         .on_menu_event(|app, event| {
             if let Err(error) = handle_menu_event(app, event.id().as_ref()) {

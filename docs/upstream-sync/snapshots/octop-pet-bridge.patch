@@ -1,12 +1,14 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 57e06326841cbda54ed319384bb75b30eded0606..d715c378e95aadf78d1dff3c9e7e1cf619b929c4 100644
+index 57e06326841cbda54ed319384bb75b30eded0606..ba34824e460e4216f37d90cea0d0fb9d2c4871cd 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  
  ## [Unreleased]
  
 +### Fixed
++
++- Taiji default idle: fixed body with an eye-only blink every five seconds; removed body movement from the default rendering.
 +
 +- PD bridge: browser CLI commands now pass through all bridge layers; proxy failures report their cause instead of a generic unavailable message.
 +
@@ -18,6 +20,8 @@ index 57e06326841cbda54ed319384bb75b30eded0606..d715c378e95aadf78d1dff3c9e7e1cf6
 +
  ### Added
  
++- Windows component packaging combines the pet and its CLI adapter for the Helper's existing signed installation and update mechanism; distribution remains a separate publishing step.
++
 +- Experimental on-demand PD CLI proxy over the existing Octop chat WebSocket. The existing screen-automation Skill calls the local helper without an extra bridge authorization dialog; ordinary chat does not invoke the helper. Includes PNG capture transport. Reuses existing WS or WSS without port changes; requires the independent server adapter and a private Agent; remote deployment is pending.
 +
  - Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
