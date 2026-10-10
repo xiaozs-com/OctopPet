@@ -2,8 +2,9 @@
 
 Mirrors `scripts/package_pd_component.py` (Windows) so both platforms publish the
 same artifact set and the helper installs them through one path. The differences
-are the platform id (`macos-x86_64`, matching `components/platforms.py`), the
-Mach-O checks in place of PE checks, and executable bits inside the archive.
+are the platform id passed via --platform (macos-x86_64 or macos-arm64, matching
+`components/platforms.py`), the Mach-O checks in place of PE checks, and
+executable bits inside the archive.
 
 No private keys, global catalogs or uploads happen here. Signing the manifest is
 a controlled release step.
@@ -24,11 +25,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ID = "octoppet"
-PLATFORM = "macos-x86_64"
 ENTRY = "paldee-pet"
 BRIDGE = "pd-device-bridge"
 PROTOCOL = "octoppet-component@1"
-CPU_TYPE_X86_64 = 0x01000007
+# macOS component platform ids (matching helper components/platforms.py) and the
+# Mach-O CPU_TYPE_* constant each ships. A thin 64-bit Mach-O stores cpuType in
+# its header (MH_MAGIC_64 little/big-endian); see macho_cpu_type().
+MACOS_PLATFORMS = {
+    "macos-x86_64": 0x01000007,  # CPU_TYPE_X86_64
+    "macos-arm64": 0x0100000C,   # CPU_TYPE_ARM64
+}
 EXECUTABLE_MODE = 0o755
 # The helper's archive extraction drops the executable bit on nested binaries,
 # so archive permissions are a hint; the caller must restore them after install.
@@ -142,7 +148,7 @@ def collect_licenses(destination, bridge_root):
     shutil.copy2(legal_root / "SOURCES.json", destination / "PINNED_LICENSE_SOURCES.json")
 
 
-def validate_archive(archive, manifest, catalog):
+def validate_archive(archive, manifest, catalog, platform, cpu_type):
     if archive.stat().st_size != manifest["size"]:
         raise ValueError("ZIP byte size mismatch")
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -159,8 +165,8 @@ def validate_archive(archive, manifest, catalog):
             metadata["id"] == manifest["id"] == catalog["id"] == ID
             and metadata["version"] == manifest["version"]
             and metadata["entry"] == manifest["entry"] == ENTRY
-            and metadata["supported_runtime_platforms"] == [manifest["platform"]] == [PLATFORM]
-            and list(catalog["manifests"]) == [PLATFORM]
+            and metadata["supported_runtime_platforms"] == [manifest["platform"]] == [platform]
+            and list(catalog["manifests"]) == [platform]
             and metadata["protocol"] == PROTOCOL
         ):
             raise ValueError("Component metadata mismatch")
@@ -174,10 +180,10 @@ def validate_archive(archive, manifest, catalog):
         with tempfile.TemporaryDirectory(prefix="paldee-pet-zip-check-") as temporary:
             bundle.extractall(temporary)
             for name in (ENTRY, BRIDGE):
-                if macho_cpu_type(Path(temporary) / name) != CPU_TYPE_X86_64:
-                    raise ValueError("Incorrect executable architecture")
+                if macho_cpu_type(Path(temporary) / name) != cpu_type:
+                    raise ValueError(f"Incorrect executable architecture for {platform}")
     return {
-        "id": ID, "version": manifest["version"], "platform": PLATFORM, "entry": ENTRY,
+        "id": ID, "version": manifest["version"], "platform": platform, "entry": ENTRY,
         "size": manifest["size"], "sha256": digest, "signature": "pending",
     }
 
@@ -189,9 +195,13 @@ def package(args):
     base = args.base_url.rstrip("/")
     if not base.startswith("https://") or not base.endswith("/paldee-pet"):
         raise ValueError("Base URL must be an HTTPS paldee-pet directory")
+    platform = args.platform
+    if platform not in MACOS_PLATFORMS:
+        raise ValueError(f"Unsupported platform {platform!r}; choose from {sorted(MACOS_PLATFORMS)}")
+    cpu_type = MACOS_PLATFORMS[platform]
     for path in [args.pet, args.bridge]:
-        if macho_cpu_type(path) != CPU_TYPE_X86_64:
-            raise ValueError(f"Only macOS x86_64 is supported: {path}")
+        if macho_cpu_type(path) != cpu_type:
+            raise ValueError(f"Only {platform} executables are supported: {path}")
         foreign = macho_dependencies(path)
         if foreign:
             raise ValueError(f"Unbundled dynamic library dependency: {path.name}: {foreign}")
@@ -207,7 +217,7 @@ def package(args):
         if status.get("protocol") != PROTOCOL or status.get("version") != version:
             raise ValueError("Executable version/protocol does not match")
     output = args.output.resolve()
-    archive = output / version / f"paldee-pet-{version}-{PLATFORM}.zip"
+    archive = output / version / f"paldee-pet-{version}-{platform}.zip"
     if archive.exists():
         raise FileExistsError("Immutable version already exists; use a new version or separate output")
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +227,7 @@ def package(args):
         "version": version,
         "protocol": PROTOCOL,
         "capabilities": ["desktop.pet@1", "desktop.helper-cli@2"],
-        "supported_runtime_platforms": [PLATFORM],
+        "supported_runtime_platforms": [platform],
         "entry": ENTRY,
         "launchable": True,
         "settings": [
@@ -252,7 +262,7 @@ def package(args):
                     info.external_attr = EXECUTABLE_MODE << 16
                 bundle.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
     manifest = {
-        "id": ID, "version": version, "platform": PLATFORM,
+        "id": ID, "version": version, "platform": platform,
         "download_url": f"{base}/{version}/{archive.name}",
         "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "size": archive.stat().st_size,
@@ -262,15 +272,15 @@ def package(args):
     catalog = {
         "id": ID, "name": metadata["name"], "category": "交互增强",
         "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机屏幕自动化小助手CLI。",
-        "supported_platforms": ["darwin"], "manifests": {PLATFORM: f"{base}/latest-{PLATFORM}.json"},
+        "supported_platforms": ["darwin"], "manifests": {platform: f"{base}/latest-{platform}.json"},
         "required_capabilities": [], "acquisition": "free", "retains_user_data_on_uninstall": True,
     }
-    write_json(output / f"latest-{PLATFORM}.unsigned.json", manifest)
-    write_json(output / f"latest-{PLATFORM}.json", manifest)
-    write_json(output / "catalog-entry.json" if args.single_catalog else output / f"catalog-entry-{PLATFORM}.json", catalog)
-    write_json(output / "package-validation.json", validate_archive(archive, manifest, catalog))
+    write_json(output / f"latest-{platform}.unsigned.json", manifest)
+    write_json(output / f"latest-{platform}.json", manifest)
+    write_json(output / "catalog-entry.json" if args.single_catalog else output / f"catalog-entry-{platform}.json", catalog)
+    write_json(output / "package-validation.json", validate_archive(archive, manifest, catalog, platform, cpu_type))
     (output / "UNSIGNED_MANIFEST.txt").write_text(
-        f"latest-{PLATFORM}.json is UNSIGNED. Sign it in the controlled release environment before uploading.\n"
+        f"latest-{platform}.json is UNSIGNED. Sign it in the controlled release environment before uploading.\n"
         "No private keys or global catalog.json are read, generated, merged or uploaded by this repository.\n",
         encoding="utf-8",
     )
@@ -283,6 +293,10 @@ def main():
     parser.add_argument("--pet", type=Path, required=True)
     parser.add_argument("--bridge", type=Path, required=True)
     parser.add_argument("--bridge-root", type=Path, required=True)
+    parser.add_argument(
+        "--platform", default="macos-x86_64", choices=sorted(MACOS_PLATFORMS),
+        help="macOS component platform id (matches helper components/platforms.py).",
+    )
     parser.add_argument("--output", type=Path, default=ROOT / "build/component-release/paldee-pet")
     parser.add_argument("--base-url", default="https://www.xiaozs.com/sah/components/paldee-pet")
     parser.add_argument(

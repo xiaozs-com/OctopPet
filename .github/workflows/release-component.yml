@@ -1,0 +1,246 @@
+# Build the Paldee Pet optional component for macOS (x86_64 + arm64) and attach
+# the UNSIGNED packages to a draft GitHub Release.
+#
+# This publishes the *optional component* (the ZIP + manifests the helper installs
+# through its component catalog), NOT the Tauri desktop installer — see
+# release.yml for the latter. The two have independent version numbers: bump the
+# component version by editing `package.json` / `src-tauri/tauri.conf.json` and
+# pass the same value to this workflow.
+#
+# Trigger: Actions → Release Component → Run workflow, providing the version
+# (e.g. 0.2.3). The workflow never signs manifests nor touches the production
+# catalog; signing and catalog merge stay a controlled manual step (see the
+# README generated alongside the artifacts).
+#
+# Required companion repo (checked out next to this one):
+#   xiaozs-com/screen-automation-device-bridge   (pd-device-bridge native binary)
+
+name: Release Component
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Component version (e.g. 0.2.3). Must match package.json."
+        required: true
+        type: string
+      target:
+        description: "Architectures to build"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - macos-x86_64
+          - macos-arm64
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-component-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            rust_target: x86_64-apple-darwin
+          - platform: macos-arm64
+            rust_target: arm64-apple-darwin
+    # Skip the unused arch when the caller picked a single target.
+    # (GitHub expressions can't filter a matrix directly, so we gate the steps.)
+    outputs:
+      built_x86_64: ${{ steps.gate.outputs.built_x86_64 }}
+      built_arm64: ${{ steps.gate.outputs.built_arm64 }}
+    steps:
+      - name: Gate (skip unused arch)
+        id: gate
+        run: |
+          target="${{ github.event.inputs.target }}"
+          plat="${{ matrix.platform }}"
+          if [[ "$target" != "both" && "$target" != "$plat" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "built_${plat#macos-}=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "built_${plat#macos-}=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip == 'false'
+
+      - name: Checkout device-bridge companion repo
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: xiaozs-com/screen-automation-device-bridge
+          path: screen-automation-device-bridge
+          # Pin to a stable ref when the bridge ships tagged releases; for now
+          # the tip of the default branch is the release source of truth.
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        if: steps.gate.outputs.skip == 'false'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Rust cache (pet)
+        if: steps.gate.outputs.skip == 'false'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Rust cache (bridge)
+        if: steps.gate.outputs.skip == 'false'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./screen-automation-device-bridge/native -> target
+
+      - name: Install frontend dependencies
+        if: steps.gate.outputs.skip == 'false'
+        run: npm ci
+
+      - name: Verify version matches input
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          APP_VERSION=$(node -p "require('./package.json').version")
+          if [ "$APP_VERSION" != "${{ github.event.inputs.version }}" ]; then
+            echo "package.json version ($APP_VERSION) != workflow input (${{ github.event.inputs.version }})"
+            exit 1
+          fi
+
+      - name: Build pet binary (${{ matrix.rust_target }})
+        if: steps.gate.outputs.skip == 'false'
+        run: npm run tauri build -- --target ${{ matrix.rust_target }} --no-bundle
+
+      - name: Build bridge binary (${{ matrix.rust_target }})
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          cargo build --release --locked --target ${{ matrix.rust_target }} \
+            --manifest-path screen-automation-device-bridge/native/Cargo.toml
+
+      - name: Package component (${{ matrix.platform }})
+        if: steps.gate.outputs.skip == 'false'
+        id: pkg
+        run: |
+          output="${{ github.workspace }}/dist/${{ matrix.platform }}"
+          python3 scripts/package_pd_component_macos.py \
+            --version "${{ github.event.inputs.version }}" \
+            --platform "${{ matrix.platform }}" \
+            --pet "src-tauri/target/${{ matrix.rust_target }}/release/paldee-pet" \
+            --bridge "screen-automation-device-bridge/native/target/${{ matrix.rust_target }}/release/pd-device-bridge" \
+            --bridge-root screen-automation-device-bridge \
+            --output "$output"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Stage release files
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          # Collect exactly the files a manual signing/upload step needs:
+          # the ZIP, the unsigned manifest, and the single-component catalog entry.
+          stage="${{ github.workspace }}/staging/${{ matrix.platform }}"
+          mkdir -p "$stage"
+          src="${{ steps.pkg.outputs.output }}"
+          ver="${{ github.event.inputs.version }}"
+          cp "$src/$ver/paldee-pet-$ver-${{ matrix.platform }}.zip" "$stage/"
+          cp "$src/latest-${{ matrix.platform }}.unsigned.json" "$stage/"
+          cp "$src/catalog-entry-${{ matrix.platform }}.json" "$stage/"
+
+      - name: Upload artifact
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: component-${{ matrix.platform }}
+          path: staging/${{ matrix.platform }}/
+          retention-days: 14
+
+  publish:
+    name: Publish draft release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten and verify
+        run: |
+          mkdir - release-assets
+          # Each matrix arch lands in its own subfolder; flatten into one dir.
+          find artifacts -type f -exec cp {} release-assets/ \;
+          echo "=== staged files ==="
+          ls -la release-assets/
+
+      - name: Generate signing/upload README
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          cat > release-assets/RELEASE-STEPS.md <<EOF
+          # Paldee Pet component ${VERSION} — signing and upload
+
+          This draft collects UNSIGNED macOS component packages. Complete the
+          release locally with the component-signing private key, then upload.
+
+          ## 1. Sign each manifest
+
+          \`\`\`
+          cd <screen-automation-helper repo>
+          for arch in x86_64 arm64; do
+            python -m venv /tmp/s && /tmp/s/bin/pip install --only-binary=:all: cryptography
+            /tmp/s/bin/python packaging/sign_component_manifest.py \
+              <downloaded>/latest-macos-\$arch.json \
+              --private-key packaging/private/component-signing-ed25519.pem
+          done
+          \`\`\`
+
+          ## 2. Merge the catalog entries
+
+          Add both \`macos-x86_64\` and \`macos-arm64\` manifest URLs to the
+          production catalog.json octoppet entry (manifests map), keep
+          supported_platforms as [\"win32\",\"darwin\"], then sign catalog.json
+          with the same key.
+
+          ## 3. Upload to the server
+
+          Upload under the paldee-pet component directory:
+
+          - paldee-pet/${VERSION}/paldee-pet-${VERSION}-macos-x86_64.zip
+          - paldee-pet/${VERSION}/paldee-pet-${VERSION}-macos-arm64.zip
+          - paldee-pet/latest-macos-x86_64.json      (signed)
+          - paldee-pet/latest-macos-arm64.json       (signed)
+          - catalog.json                              (signed, merged)
+          EOF
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: component-v${{ github.event.inputs.version }}
+          name: Component ${{ github.event.inputs.version }}
+          draft: true
+          body: |
+            ## Paldee Pet optional component ${{ github.event.inputs.version }}
+
+            UNSIGNED macOS component packages built by Actions. See
+            `RELEASE-STEPS.md` for the signing + catalog merge + upload steps.
+
+            | file | platform |
+            | --- | --- |
+            | `paldee-pet-${{ github.event.inputs.version }}-macos-x86_64.zip` | Intel |
+            | `paldee-pet-${{ github.event.inputs.version }}-macos-arm64.zip` | Apple Silicon |
+          files: |
+            release-assets/*
+          fail_on_unmatched_files: true
