@@ -15,6 +15,8 @@ TRACKED = ["src/lib/pdChatBridge.ts", "src/lib/pdChatBridge.test.ts", "src/lib/t
 ADDED = ["src/lib/brand.ts", "docs/upstream-sync/PALDEE_SYNC.md",
          "docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md", "docs/PALDEE_PET_STARTUP_ACCEPTANCE.md", "docs/PALDEE_PET_FULL_CLI.md", "src-tauri/src/component_runtime.rs", "scripts/build_pd_component.ps1",
          "scripts/package_pd_component.py", "scripts/test_pd_component.py",
+         "src-tauri/src/component_runtime_macos.rs", "scripts/build_pd_component_macos.sh",
+         "scripts/package_pd_component_macos.py", "scripts/test_pd_component_macos.py",
          "scripts/export_pd_component_patch.py", "docs/OCTOPPET_COMPONENT.md", "docs/OCTOPPET_COMPONENT_ACCEPTANCE.md"]
 
 def git(*args, data=None):

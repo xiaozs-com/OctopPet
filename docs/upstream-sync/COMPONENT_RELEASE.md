@@ -1,4 +1,6 @@
 > 2026-10-08：组件发布方案已按用户提供规范整改，当前以 [OctopPet 标准组件记录](../OCTOPPET_COMPONENT.md) 为准。本文中的 pd-device-bridge 宠物包 ID、全局目录合并和旧上传包仅为历史记录。
+>
+> 2026-10-10：在 Windows x64 之外新增 macOS x86_64 平台发布。两平台共用同一 octoppet 组件 ID 与 `octoppet-component@1` 运行协议，签名机制与上传顺序不变；macOS 首次上架需把新平台清单地址合并进服务器当前 catalog.json 并重签。macOS 平台差异、构建命令与受控签名流程见 [OCTOPPET_COMPONENT.md](../OCTOPPET_COMPONENT.md) 的「macOS 平台差异」与「受控签名流程」两节。本轮 macOS 上线记录见文末「macOS 平台交付与验证」。
 
 # 桌面宠物组件的安装、更新与源码同步
 
@@ -58,3 +60,29 @@ Windows x64 签名组件 0.1.1 已生成在 .cache/component-release/0.1.1；lat
 Pet 的 Windows make all 等价检查通过，包含 130 项前端与 24 项 Rust 测试；正式 release 构建通过。小助手相关组件测试共 40 项，其中 38 项通过、2 项跳过。实际签名 ZIP 在临时目录完成安装、重复安装、卸载和用户数据保留检查；临时签名 0.1.2 包还完成 0.1.1→0.1.2 更新和成对入口检查，未发布该测试版本。界面代码通过编译检查，尚未在重启的小助手 GUI 中人工验收“打开”按钮。
 
 本轮无远程上传、无 Git 提交/推送，未替换正在使用的组件或重启用户的小助手。正式对外仍待网站目录发布及小助手主程序交付。
+
+## macOS 平台交付与验证
+
+2026-10-10 在 Windows x64 之外完成 macOS x86_64（darwin）平台组件发布准备。目标版本与 Windows 一致：组件 0.2.3、程序 Paldee Pet 0.2.3、运行协议 `octoppet-component@1`、清单入口 `paldee-pet`。
+
+本地构建与打包：
+
+- 在原生 x86_64 机器上 `bash scripts/build_pd_component_macos.sh <screen-automation-device-bridge 根目录>`；桥接已有 release 二进制时直接调用 `package_pd_component_macos.py` 跳过重编。
+- 产出 `build/component-release/paldee-pet/0.2.3/paldee-pet-0.2.3-macos-x86_64.zip`（15,763,081 字节，SHA-256 `08495fc57ff9f19e92fb3250afbadf82b198424aa964148dcffffd7187e523eb`）、未签名清单 `latest-macos-x86_64.json` 及 catalog 条目。
+- 打包器校验两个可执行文件为 x86_64 Mach-O 且无非系统动态库；归档记录可执行位，需安装器解包后恢复。
+
+第三方许可证：18 个 macOS 专属 objc2 / block2 / dispatch2 crate 上游只发 LICENSE.md 指针文档，crate 包不带正文。按选定方案从 SPDX license-list-data 固定提交拉取官方 MIT 标准正文存于 `packaging/third-party-licenses/objc2-shared/LICENSE-MIT.txt`（SHA-256 `b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5`），并在 SOURCES.json 为这 18 个 crate 各登记一条共享记录；trio 许可证均含 MIT，一份正文满足全部。
+
+受控签名（在本机完成，私钥就地读取、未复制进 Pet 仓库、未进入任何上传文件或提交）：
+
+- 用小助手 `packaging/sign_component_manifest.py`（临时 venv 安装 `cryptography`）签名 `latest-macos-x86_64.json`；签名工具输出的公钥与小助手内置公钥一致。
+- 从服务器下载当前 catalog.json 作为起点（仅 cua-driver-windows + octoppet），给 octoppet 增加 `macos-x86_64` 清单地址与 `darwin` 平台，保留 cua-driver-windows 与所有其他字段，再用同一工具重签整个全局目录。
+- 两个产物均用 `components/signatures.verify_manifest` 复核通过。
+
+上传文件已归集在 `build/component-release/paldee-pet/upload-staging/`，附 `UPLOAD-INSTRUCTIONS.txt`：先上传版本目录下 ZIP，再上传签名平台清单，最后覆盖服务器 catalog.json（建议先备份旧的）。一致性已核对：ZIP 实际 size/SHA-256 与清单声明一致；清单 download_url 为 HTTPS 且指向正确 ZIP；catalog 的 macOS 清单地址与清单文件名一致；平台清单与全局目录均已 ed25519 签名。
+
+浏览器增强（browser-enhancement-chromium）是另一个独立签名组件，与本组件共用同一发布私钥与 key_id，但其发现走约定 URL、不依赖也不出现在全局 catalog.json 中，本次合并未把它错误加入目录，也不触碰它的任何文件。
+
+验证：本机 `make all` 通过（clippy / fmt / tsc / eslint / vitest 140 项 / cargo lib 8 + 集成 20 项）；打包后的二进制在隔离用户目录下 `status --json` 握手返回正确协议/版本。macOS 验收测试 `scripts/test_pd_component_macos.py` 仅做静态校验，未对真实签名包跑全量 12 项用例，待后续在具备签名包的环境补齐。
+
+本轮无远程上传、无 Git 提交/推送，未替换正在使用的组件或重启用户的小助手。

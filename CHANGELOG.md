@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Taiji Bot half-body mascot with transparent PNG artwork and eight animated WebP states; selectable in settings with idle animation by default.
 - Optional MascotImage animationState prop for future task-state integration, plus an offline animation preview and asset manifest.
+- macOS x86_64 (darwin) platform for the `octoppet` optional component, sharing the same component id, `octoppet-component@1` protocol and controlled Ed25519 signing as the Windows build; only the transport (Unix domain socket vs named pipe) and executable format (Mach-O vs PE) differ. macOS first-time release merges the platform manifest URL into the server catalog.json and re-signs the global catalog.
+- macOS component runtime in `src-tauri/src/component_runtime_macos.rs`, mirroring the Windows host; `lib.rs` and `config_cmd.rs` enable it under `cfg(any(windows, target_os = "macos"))`. Default user data stays at `~/Library/Application Support/com.octop.pet`.
+- macOS packaging (`scripts/package_pd_component_macos.py`, `scripts/build_pd_component_macos.sh`) and acceptance test (`scripts/test_pd_component_macos.py`) mirroring the Windows tooling, validating x86_64 Mach-O architecture, non-system dependency scan and executable bits inside the archive.
+- Pinned SPDX MIT license text for 18 macOS-only objc2 / block2 / dispatch2 crates (whose upstream ships only a LICENSE.md pointer) under `packaging/third-party-licenses/objc2-shared/`, registered in SOURCES.json; the trio license includes MIT, so one text satisfies all.
 
 ## [0.2.0] - 2026-09-03
 

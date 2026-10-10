@@ -2,8 +2,10 @@
 
 本次以用户提供的《PD 小助手外部功能组件接入规范》为准：
 D:/ai/screen-automation-cua-component/build/helper-cua-integration/docs/EXTERNAL_COMPONENT_PACKAGING.md。
-首版 ID 为 octoppet，组件与程序版本为 0.2.3；只支持实际构建的 Windows x64。
+首版 ID 为 octoppet，组件与程序版本为 0.2.3；支持 Windows x64 与 macOS x86_64（darwin）两个平台。
 旧的 pd-device-bridge 宠物组件打包方案、全局目录合并工具和相关上传包已退役，不能用于本次发布。
+
+> 2026-10-10：新增 macOS x86_64 平台。两个平台共用同一 octoppet 组件 ID 与 `octoppet-component@1` 运行协议，仅在传输原语（Windows 命名管道 / macOS Unix 域套接字）和可执行格式上不同。参见文末「macOS 平台差异」。
 
 ## 仓库、程序及用户数据
 
@@ -61,23 +63,46 @@ JSON 成功响应示例：
 
 ## 构建与打包
 
+Windows x64：
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_pd_component.ps1 -BridgeRoot D:/ai/screen-automation-device-bridge
 ```
 
-需已有 Node、Rust/MSVC、WebView2 和离线依赖缓存；脚本不安装这些工具。发布 ZIP 按固定白名单放入两个 EXE、component.json、根 LICENSE 与 licenses/ 文本，不遍历 target、缓存或用户目录。桥接采用静态 CRT，两个程序只直接导入系统 DLL，仍需系统已安装 WebView2 Runtime。PE 架构须为 AMD64，入口 status 的实际版本和运行协议也会检查。
+macOS x86_64（需在原生 x86_64 机器上执行）：
 
-输出在 build/component-release/paldee-pet/：0.2.3/paldee-pet-0.2.3-windows-x64.zip、latest-windows-x64.json、catalog-entry.json，以及未签名清单备份与本地校验报告。
+```bash
+bash scripts/build_pd_component_macos.sh <screen-automation-device-bridge 根目录> [输出目录]
+```
 
-component.json 使用规范字段。catalog-entry.json 是稳定的单条目录，只提供组件身份、分类和各平台清单地址，不包含 version/entry。版本、入口、大小和 SHA-256 由 latest 清单管理，并与 ZIP 内 component.json 核对。没有 components 数组或全局签名，不生成 catalog.json。普通版本更新只需上传 ZIP 和已签名的 latest 清单；新增组件或修改目录信息时才合并并重新签署全局目录。Paldee Pet 与 Cua 统一归入“交互增强”。
+脚本依次执行 `npm run tauri build -- --no-bundle` 与 `cargo build --release --locked --target x86_64-apple-darwin --manifest-path <bridge>/native/Cargo.toml`，再调用 `scripts/package_pd_component_macos.py` 打包。桥接二进制已是 release 产物时，可直接调用打包器跳过重编：
 
-latest-windows-x64.json 当前是未签名清单。签名前留存 latest-windows-x64.unsigned.json；由受控产品发布环境签名。仓库脚本不读取、创建、复制、输出或提交产品私钥。没有签名的清单不能在线安装，不得误当正式清单上传。
+```bash
+python3 scripts/package_pd_component_macos.py \
+  --pet src-tauri/target/release/octop-pet \
+  --bridge <bridge>/native/target/x86_64-apple-darwin/release/pd-device-bridge \
+  --bridge-root <bridge>
+```
+
+需已有 Node、Rust 与离线依赖缓存；脚本不安装这些工具。Windows 发布 ZIP 按固定白名单放入两个 EXE、component.json、根 LICENSE 与 licenses/ 文本，不遍历 target、缓存或用户目录。桥接采用静态 CRT，两个程序只直接导入系统 DLL，仍需系统已安装 WebView2 Runtime。PE 架构须为 AMD64，入口 status 的实际版本和运行协议也会检查。macOS 打包器额外校验两个可执行文件为 x86_64 Mach-O（`CPU_TYPE_X86_64`）且无非系统动态库依赖（`otool -L`），并以 `create_system=3` 配合 `external_attr` 记录可执行位（0o755），因为归档解包可能丢失嵌套二进制的可执行位、需安装器恢复。
+
+输出在 build/component-release/paldee-pet/：版本目录下 `{id}-{version}-{platform}.zip`、`latest-{platform}.json`、（macOS）`catalog-entry-{platform}.json`，以及未签名清单备份与本地校验报告。
+
+component.json 使用规范字段。catalog 条目是稳定的单条目录，只提供组件身份、分类和各平台清单地址，不包含 version/entry。版本、入口、大小和 SHA-256 由 latest 清单管理，并与 ZIP 内 component.json 核对。打包器本身不生成 catalog.json、不带全局签名。普通版本更新只需上传 ZIP 和已签名的 latest 清单；新增组件或新增平台（如本次 macOS）需把新平台清单地址合并进服务器当前 catalog.json 并重新签署全局目录。Paldee Pet 与 Cua 统一归入“交互增强”。
+
+latest-{platform}.json 由打包器产出时为未签名清单。签名前留存 latest-{platform}.unsigned.json；由受控产品发布环境签名。仓库脚本不读取、创建、复制、输出或提交产品私钥。没有签名的清单不能在线安装，不得误当正式清单上传。签名流程见 [组件发布与源码同步](upstream-sync/COMPONENT_RELEASE.md)。
 
 ## 人工上传边界
 
-仅由用户上传到 /www/wwwroot/xiaozs/sah/components/paldee-pet/：先版本目录下 ZIP，再验证公开下载字节数和 SHA-256，最后上传已签名的 latest-windows-x64.json。
+服务器公开根目录为 /www/wwwroot/xiaozs/sah/components/（即 https://www.xiaozs.com/sah/components/ ）。按「先 ZIP，再平台清单，最后全局 catalog」的顺序上传：
 
-catalog-entry.json 交给全局目录维护者合并、重新签署并最后上传。OctopPet 仓库不处理全局目录，不访问/覆盖 Cua 的组件文件；历史候选全局目录不是本次产物。
+1. 版本目录下的 ZIP → /sah/components/paldee-pet/{version}/；上传后用公开 URL 核对字节数和 SHA-256 与清单一致。
+2. 已签名的平台清单 latest-{platform}.json → /sah/components/paldee-pet/。
+3. （仅新增组件或新增平台时）已重签的全局 catalog.json → /sah/components/catalog.json，覆盖服务器现有目录。合并前先从服务器下载当前 catalog.json 作为起点，保留其他组件条目（当前为 cua-driver-windows 与 octoppet），只给 octoppet 增加（或更新）对应平台的清单地址和支持平台数组，再用发布私钥重新签名整个目录后上传。建议在服务器先备份旧的 catalog.json。
+
+catalog 条目（catalog-entry-{platform}.json）交给全局目录维护者合并、重新签署并最后上传，不直接上传到组件子目录。OctopPet 仓库脚本不访问/覆盖 Cua 或浏览器增强的组件文件；历史候选全局目录不是本次产物。
+
+注意浏览器增强组件（browser-enhancement-chromium）是另一个独立签名组件，与本组件共用同一发布私钥与 key_id，但其发现走「约定 URL」（{base}/browser-enhancement-chromium/latest-{platform}.json），不依赖也不出现在全局 catalog.json 中。合并 octoppet 的平台清单时不要把浏览器增强错误地加入目录。
 
 本轮仅做本地整改、构建及临时目录验收。小助手调用层还需按此协议调用 start/status/show/hide/stop，再完成原有组件仍可见、真实签名安装、更新和卸载联调。仅安装 ZIP 不意味着通用安装器自动获得这些控制动作。
 
@@ -100,3 +125,29 @@ component.json 声明 launchable=true，以及现有 settings 格式的布尔项
 小助手“功能组件”选中 Paldee Pet 后启用“打开”；打开通过 start --json 再 show --json，能显示已隐藏的现有实例，失败原因显示在组件页。小助手启动只读本地已验签目录，对用户明确开启此设置且已安装的应用调用 start --json，不联网下载，不注册 Windows 自启动，不强制 show，不随小助手退出而关闭独立桌宠。
 
 本功能也需要小助手调用层的本轮修改：components/manager.py、components/operations.py、gui/main_window.py；只更新 ZIP 无法让旧主程序执行联动启动。源码运行的小助手需重启；安装版需发布包含这些修改的新主程序。minimum_helper_version=1.2.6 表示配置/组件协议基线，不替代核实主程序包含本轮调用层。
+
+## macOS 平台差异（0.2.3）
+
+macOS x86_64 平台与 Windows 共用同一 octoppet 组件 ID、`octoppet-component@1` 运行协议、`octoppet` 数据目录散列算法与 dev/release 区分。调用者看到的命令、JSON 负载、错误码和退出码一致。仅传输原语与可执行格式不同：
+
+| 维度             | Windows                                                  | macOS                                                                                      |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 控制通道         | 当前用户命名管道（ACL 按 SID 作用域）                    | `$TMPDIR` 内 Unix 域套接字（目录 0700、套接字 0600），作用域为所属 uid，编码进套接字文件名 |
+| 服务器进程核对   | `GetNamedPipeServerProcessId`                            | `LOCAL_PEERPID` 对端凭据检查                                                               |
+| 入口可执行格式   | PE，须 AMD64；按导入表校验只链接系统 DLL                 | Mach-O，须 `CPU_TYPE_X86_64`；按 `otool -L` 校验无非系统动态库                             |
+| 异常退出接管核对 | `TerminateProcess` + `QueryFullProcessImageNameW` 验镜像 | `SIGKILL` + `libproc.proc_pidpath` 验镜像                                                  |
+| 归档可执行位     | PE 不需要                                                | `external_attr` 记录 0o755，安装器须在解包后恢复                                           |
+
+用户数据默认目录在 macOS 上为 `~/Library/Application Support/com.octop.pet`（与 `app_config_dir()` 返回一致，已有安装不会迁移）；`OCTOPPET_DATA_DIR` 仍可用于隔离测试或部署，拒绝整个组件根目录及其父目录的规则不变。
+
+macOS 运行时实现集中在 `src-tauri/src/component_runtime_macos.rs`（镜像 Windows 的 `component_runtime.rs`）；`lib.rs` 与 `config_cmd.rs` 通过 `cfg(any(windows, target_os = "macos"))` 同时为两平台启用组件运行时与 `data_dir()` 解析。`cargo check` / `cargo test`（lib 8 项 + 集成 20 项）在本机通过。
+
+macOS 打包相关的第三方许可证：18 个 macOS 专属 Rust crate（objc2 / block2 / dispatch2 系列）上游只发布 LICENSE.md 指针文档、crate 包不带正文，故从 SPDX license-list-data 固定提交拉取官方 MIT 标准正文，存于 `packaging/third-party-licenses/objc2-shared/LICENSE-MIT.txt`，并在 SOURCES.json 为这 18 个 crate 各登记一条共享记录（trio 许可证「Zlib OR Apache-2.0 OR MIT」均包含 MIT，一份正文满足全部）。
+
+macOS 验收测试 `scripts/test_pd_component_macos.py` 镜像 Windows 的 `test_pd_component.py`，覆盖元数据/架构、中文空格安装路径、并发与重复启动、正常与异常停止、超时、协议不兼容、独立用户数据保留与卸载。需对真实签名包执行；本仓库不自动运行。
+
+## 受控签名流程（0.2.3 起）
+
+组件清单与全局目录的 Ed25519 签名属于小助手项目的产品发布步骤，使用独立小助手仓库的受信任发布私钥（key_id `xiaozs-components-2026-01`）；客户端用小助手内置公钥 `EUlug4+wmNeU6MVKjjC1/9cSygyWsSAeEVAHaw13Pqk=` 验签。本仓库刻意不持有、不读取、不复制、不提交该私钥；打包器只产出 `"signature": "pending"` 的未签名清单与 catalog 条目。
+
+签名工具为小助手仓库的 `packaging/sign_component_manifest.py`（依赖 `cryptography`）。流程：先签名平台清单 `latest-{platform}.json`；新增平台时还需下载服务器当前 `catalog.json`，合并新平台清单地址后用同一工具重签整个全局目录。两个产物都要用小助手 `components/signatures.verify_manifest` 复核通过后再上传。签名可在具备私钥的受控机器（含本机）执行；私钥不得进入任何上传文件或提交。

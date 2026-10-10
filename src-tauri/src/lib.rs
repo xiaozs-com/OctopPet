@@ -1,5 +1,8 @@
 #[cfg(windows)]
 pub mod component_runtime;
+#[cfg(target_os = "macos")]
+#[path = "component_runtime_macos.rs"]
+pub mod component_runtime;
 pub mod config_cmd;
 pub mod pd_bridge_cmd;
 pub mod secrets_cmd;
@@ -8,7 +11,7 @@ pub mod window_cmd;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let host = component_runtime::entry();
     #[allow(unused_mut)]
     let mut context = tauri::generate_context!();
@@ -59,7 +62,7 @@ pub fn run() {
             window_cmd::ensure_dialog_windows_transparent(app.handle());
             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
             window_cmd::spawn_pet_transparency_watchdog(app.handle());
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             host.serve(app.handle().clone());
             Ok(())
         })

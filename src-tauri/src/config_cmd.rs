@@ -4,7 +4,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
-#[cfg(not(windows))]
+// Only the fallback branch resolves the config path through `app.path()`.
+#[cfg(not(any(windows, target_os = "macos")))]
 use tauri::Manager;
 
 const CONFIG_FILE_NAME: &str = "config.json";
@@ -129,12 +130,16 @@ pub fn patch_at_path(path: &Path, patch: Value) -> Result<AppConfig, String> {
 }
 
 fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    #[cfg(windows)]
+    // Both component platforms resolve their user data through the lifecycle
+    // module, so `OCTOPPET_DATA_DIR` isolates a test or deployment. The macOS
+    // default is `~/Library/Application Support/com.octop.pet`, which is the
+    // same directory `app_config_dir()` returns, so existing installs do not move.
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let _ = app;
         Ok(crate::component_runtime::data_dir()?.join(CONFIG_FILE_NAME))
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     app.path()
         .app_config_dir()
         .map(|path| path.join(CONFIG_FILE_NAME))
