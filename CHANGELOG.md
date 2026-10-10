@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rename project packages, native crate and build executable to paldee-pet; retain stable component and user-data identifiers.
+
 - Component catalog entries now omit version and entry fields; Paldee Pet and Cua use the interaction enhancement category. Routine releases update only the ZIP and signed latest manifest.
 
 - Paldee Pet 0.2.3 forwards every helper CLI family and adds stdin/file transport on the existing chat socket; preserves the optional Helper startup setting.

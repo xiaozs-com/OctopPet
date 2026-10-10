@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TRACKED = ["src/lib/pdChatBridge.ts", "src/lib/pdChatBridge.test.ts", "src/lib/tauriApi.ts", ".gitignore", "package.json", "package-lock.json",
            "src-tauri/tauri.conf.json", "src-tauri/src/tray.rs",
            "src/main.tsx", "src/windows/SettingsWindow.tsx", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
-           "src-tauri/src/lib.rs", "src-tauri/src/config_cmd.rs",
+           "src-tauri/src/lib.rs", "src-tauri/src/main.rs", "src-tauri/tests/command_logic.rs", "src-tauri/src/config_cmd.rs",
            "src-tauri/src/secrets_cmd.rs", "src-tauri/src/pd_bridge_cmd.rs"]
 ADDED = ["src/lib/brand.ts", "docs/upstream-sync/PALDEE_SYNC.md",
          "docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md", "docs/PALDEE_PET_STARTUP_ACCEPTANCE.md", "docs/PALDEE_PET_FULL_CLI.md", "src-tauri/src/component_runtime.rs", "scripts/build_pd_component.ps1",

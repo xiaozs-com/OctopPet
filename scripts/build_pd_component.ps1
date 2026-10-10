@@ -20,7 +20,7 @@ try {
 }
 $packageArguments = @(
     'scripts/package_pd_component.py',
-    '--pet', 'src-tauri/target/x86_64-pc-windows-msvc/release/octop-pet.exe',
+    '--pet', 'src-tauri/target/x86_64-pc-windows-msvc/release/paldee-pet.exe',
     '--bridge', (Join-Path $BridgeRoot 'native/target/x86_64-pc-windows-msvc/release/pd-device-bridge.exe'),
     '--bridge-root', $BridgeRoot
 )

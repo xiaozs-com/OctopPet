@@ -73,3 +73,5 @@ git diff --check
 0.2.3 全 CLI 接线涉及 pdChatBridge.ts / tauriApi.ts / pd_bridge_cmd.rs；参数范围只限制固定 helper CLI 根，不列举子命令。独立桥接传输细节及服务端模块更新留在桥接仓库；服务端不修改 Octop API，已有 ws.py 补丁升级兼容性仍要检查。完整记录见 ../PALDEE_PET_FULL_CLI.md。
 
 2026-10-09 目录精简：打包器不再在 catalog-entry.json 输出 version/entry，验证改为 ZIP component.json 与 latest 清单版本及入口一致；目录只核对稳定 ID 和平台。Pet 与 Cua 分类统一为“交互增强”；Cua 的 packaging/windows/create_release_metadata.ps1 同步修改分类。本地网站全局目录重新签署，保留其他字段和条目。普通版本更新无需重生成目录；只有目录身份、分类或清单地址变化才合并并签名。已有 ZIP、latest 清单及 Cua 发布文件不改。
+
+2026-10-10 项目包名改为 paldee-pet，Rust 库名 paldee_pet_lib，原生构建入口 paldee-pet.exe；同步上游后检查 package/lock、Cargo/lock、main.rs、command_logic.rs 与 build_pd_component.ps1 的名字接线。上游 OctopPet 版权来源、内部 octoppet 组件 ID、com.octop.pet 用户数据及协议标识保留。历史补丁与已发布 ZIP 不重写。

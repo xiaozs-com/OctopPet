@@ -58,8 +58,8 @@ node -v && npm -v && rustc --version && cargo --version
 ### 1. Install and run
 
 ```sh
-git clone <your-repo-url> octop-pet
-cd octop-pet
+git clone <your-repo-url> paldee-pet
+cd paldee-pet
 make install          # npm install
 make install-hooks    # once per clone — enables pre-commit quality gate
 make dev              # npm run tauri dev
@@ -161,7 +161,7 @@ See [Octop API docs](https://github.com/TencentCloud/Octop/blob/main/docs/api.md
 ## 🏗️ Architecture
 
 ```
-octop-pet/
+paldee-pet/
   src/                 React UI — pet, chat, settings windows (one SPA, routed by window label)
   src-tauri/           Rust — tray, multi-window, config, keyring, global shortcuts
   assets/              App icon and mascot assets

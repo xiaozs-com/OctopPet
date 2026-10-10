@@ -1,4 +1,4 @@
-# Build OctopPet for macOS (Apple Silicon + Intel) and Windows (x64 + ARM64),
+# Build Paldee Pet for macOS (Apple Silicon + Intel) and Windows (x64 + ARM64),
 # then attach installers to the GitHub Release for the pushed tag.
 #
 # Trigger: push a semver tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
@@ -149,9 +149,9 @@ jobs:
           # WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-          releaseName: OctopPet ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: Paldee Pet ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           releaseBody: |
-            ## OctopPet ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+            ## Paldee Pet ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
             ${{ steps.notes.outputs.body }}
 

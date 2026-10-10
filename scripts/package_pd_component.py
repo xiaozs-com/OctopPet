@@ -1,4 +1,4 @@
-"""Package OctopPet with UNSIGNED manifests. No private keys, global catalogs or uploads."""
+"""Package Paldee Pet with UNSIGNED manifests. No private keys, global catalogs or uploads."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -197,10 +197,10 @@ def package(args):
     manifest = {"id": ID, "version": version, "platform": PLATFORM,
                 "download_url": f"{base}/{version}/{archive.name}",
                 "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "size": archive.stat().st_size,
-                "entry": ENTRY, "license": "MIT", "source": "https://github.com/xiaozs-com/OctopPet",
+                "entry": ENTRY, "license": "MIT", "source": "https://github.com/xiaozs-com/paldee-pet",
                 "minimum_helper_version": "1.2.6"}
     catalog = {"id": ID, "name": metadata["name"], "category": "交互增强",
-               "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机 PD 小助手 CLI。",
+               "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机屏幕自动化小助手CLI。",
                "supported_platforms": ["win32"], "manifests": {PLATFORM: f"{base}/latest-{PLATFORM}.json"},
                "required_capabilities": [], "acquisition": "free", "retains_user_data_on_uninstall": True}
     write_json(output / f"latest-{PLATFORM}.unsigned.json", manifest)

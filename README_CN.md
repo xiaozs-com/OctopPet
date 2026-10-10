@@ -65,8 +65,8 @@ node -v && npm -v && rustc --version && cargo --version
 ### 1. 安装并运行
 
 ```sh
-git clone <your-repo-url> octop-pet
-cd octop-pet
+git clone <your-repo-url> paldee-pet
+cd paldee-pet
 make install          # npm install
 make install-hooks    # 每个 clone 执行一次 — 启用提交前质量检查
 make dev              # npm run tauri dev
@@ -162,7 +162,7 @@ octop run --host 127.0.0.1 --port 8088
 ## 🏗️ 架构
 
 ```
-octop-pet/
+paldee-pet/
   src/                 React UI — 桌宠、聊天、设置（单 SPA，按窗口 label 路由）
   src-tauri/           Rust — 托盘、多窗口、配置、钥匙串、全局快捷键
   assets/              应用图标与 mascot 资源

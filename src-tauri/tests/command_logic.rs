@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use octop_pet_lib::{
+use paldee_pet_lib::{
     config_cmd::{load_from_path, patch_at_path, save_to_path, select_mascot, AppConfig},
     secrets_cmd::{
         delete_secret_from_file, get_secret_from_file, secret_account, set_secret_in_file,
@@ -76,7 +76,7 @@ fn config_file_defaults_when_missing_and_round_trips() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("octop-pet-config-{unique}"));
+    let dir = std::env::temp_dir().join(format!("paldee-pet-config-{unique}"));
     let path = dir.join("config.json");
 
     assert_eq!(load_from_path(&path).unwrap(), AppConfig::default());
@@ -98,7 +98,7 @@ fn config_patch_updates_only_owned_fields() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("octop-pet-patch-{unique}"));
+    let dir = std::env::temp_dir().join(format!("paldee-pet-patch-{unique}"));
     let path = dir.join("config.json");
     let original = AppConfig {
         base_url: "https://old.example".into(),
@@ -142,7 +142,7 @@ fn keep_windows_visible_defaults_when_missing_from_file() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("octop-pet-keep-visible-{unique}"));
+    let dir = std::env::temp_dir().join(format!("paldee-pet-keep-visible-{unique}"));
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("config.json");
     fs::write(&path, r#"{"baseUrl":"https://x.example"}"#).unwrap();
@@ -168,7 +168,7 @@ fn debug_secrets_file_round_trips_without_keyring() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("octop-pet-secrets-{unique}"));
+    let dir = std::env::temp_dir().join(format!("paldee-pet-secrets-{unique}"));
     let path = dir.join("dev-secrets.json");
 
     assert_eq!(get_secret_from_file(&path, "alice:password").unwrap(), None);

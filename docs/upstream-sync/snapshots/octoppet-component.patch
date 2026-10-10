@@ -7,2173 +7,6 @@ index dce055b9974c456ce4eec44abc1da5f2a08612ef..d3c782dae31ea5c7fc19e4fe952f2a5c
  *.tmp
  .cache/
 +build/component-release/
-diff --git a/package-lock.json b/package-lock.json
-index 0e1ef1b9b6a594fbbfa55c0dc4d5fdb13ef5467f..ddaecf372c99c55baf4f1f7975dfadc20779ce88 100644
---- a/package-lock.json
-+++ b/package-lock.json
-@@ -1,12 +1,12 @@
- {
-   "name": "octop-pet",
--  "version": "0.2.0",
-+  "version": "0.2.3",
-   "lockfileVersion": 3,
-   "requires": true,
-   "packages": {
-     "": {
-       "name": "octop-pet",
--      "version": "0.2.0",
-+      "version": "0.2.3",
-       "dependencies": {
-         "@tauri-apps/api": "^2",
-         "@tauri-apps/plugin-http": "^2.5.9",
-diff --git a/package.json b/package.json
-index 10f7eacb28e246ef3c71221d3b79e451572ca7da..c8fc03668e641d603dc4623ec32bea6c7f19a584 100644
---- a/package.json
-+++ b/package.json
-@@ -1,7 +1,7 @@
- {
-   "name": "octop-pet",
-   "private": true,
--  "version": "0.2.0",
-+  "version": "0.2.3",
-   "type": "module",
-   "scripts": {
-     "dev": "vite",
-diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
-index f0bc3616687abea17f1564f9c63763296bbea9be..3db699a71c5f17d8d4420602b12e6fd4662735fd 100644
---- a/src-tauri/Cargo.lock
-+++ b/src-tauri/Cargo.lock
-@@ -2653,7 +2653,7 @@ dependencies = [
- 
- [[package]]
- name = "octop-pet"
--version = "0.2.0"
-+version = "0.2.3"
- dependencies = [
-  "keyring",
-  "objc2",
-@@ -2668,6 +2668,8 @@ dependencies = [
-  "tauri-plugin-global-shortcut",
-  "tauri-plugin-http",
-  "tauri-plugin-opener",
-+ "tokio",
-+ "windows-sys 0.61.2",
- ]
- 
- [[package]]
-diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
-index 717588fac203691fe3497400898e876ee656d68f..e51b561f087920ce1408138304bdeca62281a40e 100644
---- a/src-tauri/Cargo.toml
-+++ b/src-tauri/Cargo.toml
-@@ -1,6 +1,6 @@
- [package]
- name = "octop-pet"
--version = "0.2.0"
-+version = "0.2.3"
- description = "Desktop companion for a remote Octop instance"
- authors = ["you"]
- edition = "2021"
-@@ -29,6 +29,8 @@ tauri-plugin-http = "2"
- 
- [target.'cfg(windows)'.dependencies]
- raw-window-handle = "0.6"
-+tokio = { version = "1.53.1", features = ["rt", "net", "time", "io-util"] }
-+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Console"] }
- 
- [target.'cfg(target_os = "macos")'.dependencies]
- objc2 = "0.6"
-diff --git a/src-tauri/src/config_cmd.rs b/src-tauri/src/config_cmd.rs
-index 4d4bbe80ae813493a5285ce4f4f0eec850433e44..ff65d4aac39db29c11d01a1a4c3eba5bcdb0eb86 100644
---- a/src-tauri/src/config_cmd.rs
-+++ b/src-tauri/src/config_cmd.rs
-@@ -3,7 +3,9 @@ use std::{collections::HashMap, fs, path::Path, sync::Mutex};
- use serde::de::DeserializeOwned;
- use serde::{Deserialize, Serialize};
- use serde_json::Value;
--use tauri::{AppHandle, Manager};
-+use tauri::AppHandle;
-+#[cfg(not(windows))]
-+use tauri::Manager;
- 
- const CONFIG_FILE_NAME: &str = "config.json";
- static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
-@@ -127,6 +129,12 @@ pub fn patch_at_path(path: &Path, patch: Value) -> Result<AppConfig, String> {
- }
- 
- fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-+    #[cfg(windows)]
-+    {
-+        let _ = app;
-+        Ok(crate::component_runtime::data_dir()?.join(CONFIG_FILE_NAME))
-+    }
-+    #[cfg(not(windows))]
-     app.path()
-         .app_config_dir()
-         .map(|path| path.join(CONFIG_FILE_NAME))
-diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
-index a52c03d4ca8a77aa5da0b446c169238b46f51fce..1bdf9897567c78f90038f9913420f7fa6c242012 100644
---- a/src-tauri/src/lib.rs
-+++ b/src-tauri/src/lib.rs
-@@ -1,3 +1,5 @@
-+#[cfg(windows)]
-+pub mod component_runtime;
- pub mod config_cmd;
- pub mod pd_bridge_cmd;
- pub mod secrets_cmd;
-@@ -6,6 +8,14 @@ pub mod window_cmd;
- 
- #[cfg_attr(mobile, tauri::mobile_entry_point)]
- pub fn run() {
-+    #[cfg(windows)]
-+    let host = component_runtime::entry();
-+    #[allow(unused_mut)]
-+    let mut context = tauri::generate_context!();
-+    #[cfg(windows)]
-+    for window in &mut context.config_mut().app.windows {
-+        window.create = false;
-+    }
-     tauri::Builder::default()
-         .plugin(tauri_plugin_opener::init())
-         .plugin(tauri_plugin_dialog::init())
-@@ -28,7 +38,16 @@ pub fn run() {
-             }
-             _ => {}
-         })
--        .setup(|app| {
-+        .setup(move |app| {
-+            #[cfg(windows)]
-+            {
-+                let data_dir = component_runtime::data_dir()?;
-+                for config in &app.config().app.windows {
-+                    tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
-+                        .data_directory(data_dir.join("webview"))
-+                        .build()?;
-+                }
-+            }
-             #[cfg(target_os = "macos")]
-             {
-                 // Desktop-pet style: stay out of Dock/Stage Manager focus fights
-@@ -40,6 +59,8 @@ pub fn run() {
-             window_cmd::ensure_dialog_windows_transparent(app.handle());
-             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
-             window_cmd::spawn_pet_transparency_watchdog(app.handle());
-+            #[cfg(windows)]
-+            host.serve(app.handle().clone());
-             Ok(())
-         })
-         .invoke_handler(tauri::generate_handler![
-@@ -61,6 +82,6 @@ pub fn run() {
-             window_cmd::apply_window_deactivate_policy,
-             tray::reload_hotkeys,
-         ])
--        .run(tauri::generate_context!())
-+        .run(context)
-         .expect("error while running tauri application");
- }
-diff --git a/src-tauri/src/pd_bridge_cmd.rs b/src-tauri/src/pd_bridge_cmd.rs
-index 1c6bad441c12d0583c4985c44dff97959062faac..7ec8d8c401167947bda075dc5528d0db07faa305 100644
---- a/src-tauri/src/pd_bridge_cmd.rs
-+++ b/src-tauri/src/pd_bridge_cmd.rs
-@@ -1,7 +1,7 @@
--//! Thin adapter to the independently installed, read-only PD component.
-+//! Thin adapter to the independently installed helper CLI transport.
- use serde_json::Value;
- use std::{
--    io::Read,
-+    io::{Read, Write},
-     path::PathBuf,
-     process::{Command, Stdio},
-     time::{Duration, Instant},
-@@ -16,6 +16,25 @@ fn component_entry() -> Result<PathBuf, String> {
-         }
-         return Err("开发组件路径无效".into());
-     }
-+    if let Ok(exe) = std::env::current_exe() {
-+        if let Some(directory) = exe.parent() {
-+            let metadata_path = directory.join("component.json");
-+            if metadata_path.is_file() {
-+                let metadata: Value = serde_json::from_slice(
-+                    &std::fs::read(metadata_path).map_err(|_| "宠物组件记录不可读")?,
-+                )
-+                .map_err(|_| "宠物组件记录无效")?;
-+                if metadata["id"] != "octoppet" || metadata["protocol"] != "octoppet-component@1" {
-+                    return Err("宠物组件协议不兼容".into());
-+                }
-+                let path = directory.join("pd-device-bridge.exe");
-+                return path
-+                    .is_file()
-+                    .then_some(path)
-+                    .ok_or("宠物包中的 CLI 桥接缺失".into());
-+            }
-+        }
-+    }
-     let root = std::env::var_os("SCREEN_AUTOMATION_HOME")
-         .map(PathBuf::from)
-         .or_else(|| {
-@@ -49,18 +68,37 @@ fn component_entry() -> Result<PathBuf, String> {
- pub async fn pd_execute_cli(
-     window: tauri::WebviewWindow,
-     args: Vec<String>,
-+    input: Option<Value>,
- ) -> Result<Value, String> {
-     if window.label() != "chat" {
--        return Err("本机查询仅允许从聊天窗口调用".into());
-+        return Err("本机 CLI 仅允许从聊天窗口调用".into());
-     }
-     tauri::async_runtime::spawn_blocking(move || {
-         if !valid_cli_args(&args) {
--            return Err("此请求不属于已启用的小助手 CLI 范围".into());
-+            return Err("CLI 参数格式无效".into());
-         }
-         let mut command = Command::new(component_entry()?);
--        command.args(&args);
-+        let payload = if let Some(input) = input {
-+            if !input.is_object() {
-+                return Err("CLI 输入格式无效".into());
-+            }
-+            let bytes = serde_json::to_vec(&serde_json::json!({"args":args,"input":input}))
-+                .map_err(|_| "CLI 输入序列化失败")?;
-+            if bytes.len() > 8 * 1024 * 1024 {
-+                return Err("CLI 输入超过 8 MiB".into());
-+            }
-+            command.arg("--request-json");
-+            Some(bytes)
-+        } else {
-+            command.args(&args);
-+            None
-+        };
-         command
--            .stdin(Stdio::null())
-+            .stdin(if payload.is_some() {
-+                Stdio::piped()
-+            } else {
-+                Stdio::null()
-+            })
-             .stdout(Stdio::piped())
-             .stderr(Stdio::null());
-         #[cfg(windows)]
-@@ -69,11 +107,15 @@ pub async fn pd_execute_cli(
-             command.creation_flags(0x08000000);
-         }
-         let mut child = command.spawn().map_err(|_| "本机桥接组件启动失败")?;
-+        let writer = payload.map(|bytes| {
-+            let mut stdin = child.stdin.take().expect("piped CLI input");
-+            std::thread::spawn(move || stdin.write_all(&bytes))
-+        });
-         let stdout = child.stdout.take().ok_or("本机输出不可用")?;
-         let reader = std::thread::spawn(move || {
-             let mut bytes = Vec::new();
-             stdout
--                .take(8 * 1024 * 1024 + 1)
-+                .take(16 * 1024 * 1024 + 1)
-                 .read_to_end(&mut bytes)
-                 .map(|_| bytes)
-         });
-@@ -87,22 +129,25 @@ pub async fn pd_execute_cli(
-                 _ => {
-                     let _ = child.kill();
-                     let _ = child.wait();
--                    return Err("本机查询超时".into());
-+                    return Err("本机 CLI 调用超时".into());
-                 }
-             }
-         }
-+        if let Some(writer) = writer {
-+            let _ = writer.join();
-+        }
-         let output = reader
-             .join()
-             .map_err(|_| "本机输出读取失败")?
-             .map_err(|_| "本机输出读取失败")?;
--        if output.len() > 8 * 1024 * 1024 {
--            return Err("本机查询结果过大".into());
-+        if output.len() > 16 * 1024 * 1024 {
-+            return Err("本机 CLI 结果过大".into());
-         }
-         let result: Value = serde_json::from_slice(&output).map_err(|_| "本机桥接结果格式无效")?;
-         Ok(result)
-     })
-     .await
--    .map_err(|_| "本机查询线程异常".to_string())?
-+    .map_err(|_| "本机 CLI 线程异常".to_string())?
- }
- 
- fn valid_version(version: &str) -> bool {
-@@ -126,33 +171,31 @@ mod tests {
- }
- 
- fn valid_cli_args(args: &[String]) -> bool {
--    if args.len() < 2
-+    if args.is_empty()
-         || args.len() > 128
-         || !matches!(args[0].as_str(), "cli" | "browser")
-         || args.iter().any(|a| a.len() > 4096 || a.contains('\0'))
-     {
-         return false;
-     }
--    if args[0] == "browser" {
--        return true;
--    }
--    match args[1].as_str() {
--        "status" | "describe" | "capabilities" | "health" => args.len() == 2,
--        "access" => args.len() == 3 && args[2] == "list",
--        "window" | "screen" | "mouse" | "keyboard" | "ocr" | "browser" => args.len() >= 3,
--        _ => false,
--    }
-+    true
- }
- 
- #[cfg(test)]
- mod cli_tests {
-     use super::valid_cli_args;
-     #[test]
--    fn only_enabled_helper_cli_arguments_are_allowed() {
-+    fn all_helper_subcommands_are_allowed() {
-+        assert!(valid_cli_args(
-+            &["cli", "workflow", "schema"].map(String::from)
-+        ));
-+        assert!(valid_cli_args(
-+            &["cli", "future-command", "--help"].map(String::from)
-+        ));
-         for args in [
-             vec!["bash", "-c", "run"],
--            vec!["cli", "workflow", "run"],
--            vec!["cli", "access", "activate"],
-+            vec!["powershell", "-Command", "run"],
-+            vec!["cmd", "/c", "run"],
-         ] {
-             assert!(!valid_cli_args(
-                 &args.into_iter().map(String::from).collect::<Vec<_>>()
-diff --git a/src-tauri/src/secrets_cmd.rs b/src-tauri/src/secrets_cmd.rs
-index 48e7cfe9ea44a20b98e537d8c1c1bf1c921fb6fc..19eaef0ffb2c6b18076dafbf18e403f900f70490 100644
---- a/src-tauri/src/secrets_cmd.rs
-+++ b/src-tauri/src/secrets_cmd.rs
-@@ -1,11 +1,10 @@
--use std::{
--    collections::HashMap,
--    fs,
--    path::{Path, PathBuf},
--    sync::Mutex,
--};
-+use std::{collections::HashMap, fs, path::Path, sync::Mutex};
- 
--use tauri::{AppHandle, Manager};
-+#[cfg(debug_assertions)]
-+use std::path::PathBuf;
-+use tauri::AppHandle;
-+#[cfg(all(debug_assertions, not(windows)))]
-+use tauri::Manager;
- 
- use crate::config_cmd;
- 
-@@ -14,6 +13,7 @@ use keyring::{Entry, Error};
- 
- #[cfg(not(debug_assertions))]
- const KEYRING_SERVICE: &str = "com.octop.pet";
-+#[cfg(debug_assertions)]
- const DEV_SECRETS_FILE: &str = "dev-secrets.json";
- static SECRETS_WRITE_LOCK: Mutex<()> = Mutex::new(());
- 
-@@ -87,6 +87,12 @@ pub fn delete_secret_from_file(path: &Path, account: &str) -> Result<(), String>
- 
- #[cfg(debug_assertions)]
- fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
-+    #[cfg(windows)]
-+    {
-+        let _ = app;
-+        Ok(crate::component_runtime::data_dir()?.join(DEV_SECRETS_FILE))
-+    }
-+    #[cfg(not(windows))]
-     app.path()
-         .app_config_dir()
-         .map(|dir| dir.join(DEV_SECRETS_FILE))
-@@ -114,6 +120,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
-         return Ok(None);
-     }
-     let account = secret_account(&username, &key)?;
-+    #[cfg(not(debug_assertions))]
-+    let _ = &account;
- 
-     #[cfg(debug_assertions)]
-     {
-@@ -132,6 +140,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
- pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> {
-     let username = config_cmd::load_config(app.clone())?.username;
-     let account = secret_account(&username, &key)?;
-+    #[cfg(not(debug_assertions))]
-+    let _ = &account;
- 
-     #[cfg(debug_assertions)]
-     {
-@@ -148,6 +158,8 @@ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), Stri
- pub fn delete_secret(app: AppHandle, key: String) -> Result<(), String> {
-     let username = config_cmd::load_config(app.clone())?.username;
-     let account = secret_account(&username, &key)?;
-+    #[cfg(not(debug_assertions))]
-+    let _ = &account;
- 
-     #[cfg(debug_assertions)]
-     {
-diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
-index 922b044fe56b0dbadd7cf9d9418327026941c449..bc2d6f43869091dd9030213ab70ad355ca52756b 100644
---- a/src-tauri/src/tray.rs
-+++ b/src-tauri/src/tray.rs
-@@ -175,6 +175,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
-     let tray = TrayIconBuilder::new()
-         .icon(icon)
-         .icon_as_template(true)
-+        .tooltip(app.config().product_name.as_deref().unwrap_or_default())
-         .menu(&menu)
-         .on_menu_event(|app, event| {
-             if let Err(error) = handle_menu_event(app, event.id().as_ref()) {
-diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
-index 745b91113b62954d99da0b4352f77c15b92adb8c..21cda10d68e188bec5a297ae13c31de318e86531 100644
---- a/src-tauri/tauri.conf.json
-+++ b/src-tauri/tauri.conf.json
-@@ -1,7 +1,7 @@
- {
-   "$schema": "https://schema.tauri.app/config/2",
--  "productName": "OctopPet",
--  "version": "0.2.0",
-+  "productName": "Paldee Pet",
-+  "version": "0.2.3",
-   "identifier": "com.octop.pet",
-   "build": {
-     "beforeDevCommand": "npm run dev",
-@@ -28,7 +28,7 @@
-       },
-       {
-         "label": "chat",
--        "title": "Octop Chat",
-+        "title": "Paldee Pet",
-         "width": 400,
-         "height": 400,
-         "minWidth": 280,
-diff --git a/src/lib/pdChatBridge.test.ts b/src/lib/pdChatBridge.test.ts
-index face955fdb43978dd5ce78ab6b862a5aae27bc72..0cb66c80a0f98e8c09841013829425c2bdb12c82 100644
---- a/src/lib/pdChatBridge.test.ts
-+++ b/src/lib/pdChatBridge.test.ts
-@@ -35,6 +35,52 @@ beforeEach(() => {
-   });
- });
- describe("PD bridge on the existing chat socket", () => {
-+  it.each([
-+    "workflow",
-+    "memory",
-+    "runs",
-+    "components",
-+    "file",
-+    "agent",
-+    "future-command",
-+  ])("forwards complete helper CLI family %s", async (family) => {
-+    const { socket, handle } = setup();
-+    const args = ["cli", family, "--help"];
-+    handle({ ...request, args });
-+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
-+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
-+  });
-+  it("passes stdin and files on the same socket and deduplicates the operation", async () => {
-+    const { socket, handle } = setup();
-+    const input = {
-+      stdin: "中文 JSON",
-+      uploads: [],
-+      downloads: ["C:/test/source.py"],
-+    };
-+    const frame = { ...request, method: "helper.cli.io", input };
-+    handle(frame);
-+    handle(frame);
-+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
-+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(1);
-+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(request.args, input);
-+  });
-+  it("executes more than eight completed commands on a persistent chat", async () => {
-+    const { socket, handle } = setup();
-+    for (let index = 0; index < 20; index++) {
-+      handle({ ...request, id: index.toString(16).padStart(32, "0") });
-+      await vi.waitFor(() =>
-+        expect(socket.send).toHaveBeenCalledTimes(index + 1),
-+      );
-+    }
-+    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(20);
-+  });
-+  it("rejects malformed IO envelopes before invoking the helper", async () => {
-+    const { socket, handle } = setup();
-+    handle({ ...request, method: "helper.cli.io", input: { stdin: 123 } });
-+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
-+    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
-+  });
-+
-   it("read-only probes run without confirmation", async () => {
-     const { handle } = setup();
-     for (const [index, args] of [
-@@ -113,11 +159,11 @@ describe("PD bridge on the existing chat socket", () => {
-       expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
-     },
-   );
--  it("rejects operating-system commands and disabled CLI families", () => {
-+  it("rejects invalid framing and operating-system entry points", () => {
-     for (const args of [
-       ["bash", "-c", "echo test"],
--      ["cli", "workflow", "run"],
--      ["cli", "access", "activate"],
-+      ["powershell", "-Command", "run"],
-+      ["cmd", "/c", "run"],
-       ["cli", "screen", "bad\0"],
-     ])
-       expect(isPdCliArgs(args)).toBe(false);
-diff --git a/src/lib/pdChatBridge.ts b/src/lib/pdChatBridge.ts
-index 7551449a6343aeb7d65ce4907d509984b4e4ec5d..bfd71a68535e648c58f2cf5a9cb6c2bc6d166cc0 100644
---- a/src/lib/pdChatBridge.ts
-+++ b/src/lib/pdChatBridge.ts
-@@ -13,6 +13,7 @@ export function createPdChatBridge(
-   reportError: (message: string) => void = () => {},
- ) {
-   const requests = new Map<string, Promise<unknown>>();
-+  const activeRequests = new Set<string>();
-   return (chunk: unknown): boolean => {
-     if (!chunk || typeof chunk !== "object") return false;
-     const frame = chunk as Record<string, unknown>;
-@@ -27,28 +28,49 @@ export function createPdChatBridge(
-     const id = frame.id;
-     let result = requests.get(id);
-     if (!result) {
--      if (requests.size >= 8) return true;
--      result = (async () => {
--        if (
--          !supportsPdChatBridge(socket.url) ||
--          frame.method !== "helper.cli" ||
--          !isPdCliArgs(frame.args)
--        )
--          return { ok: false, error: "此连接或操作不支持本机桥接" };
--        try {
--          if (socket.readyState !== WebSocket.OPEN)
--            return { ok: false, error: "聊天连接已结束" };
--          return await tauriApi.pdExecuteCli(frame.args as string[]);
--        } catch (error) {
--          const reason =
--            error instanceof Error
--              ? error.message
--              : typeof error === "string"
--                ? error
--                : "小助手调用失败，请检查本机安装和运行状态";
--          return { ok: false, error: reason };
--        }
--      })();
-+      if (activeRequests.size >= 8) {
-+        result = Promise.resolve({
-+          ok: false,
-+          error: "本机 CLI 请求队列繁忙，请稍后重试",
-+        });
-+      } else {
-+        activeRequests.add(id);
-+        result = (async () => {
-+          if (
-+            !supportsPdChatBridge(socket.url) ||
-+            !["helper.cli", "helper.cli.io"].includes(String(frame.method)) ||
-+            !isPdCliArgs(frame.args)
-+          )
-+            return { ok: false, error: "此连接或操作不支持本机桥接" };
-+          try {
-+            if (socket.readyState !== WebSocket.OPEN)
-+              return { ok: false, error: "聊天连接已结束" };
-+            if (frame.method === "helper.cli.io") {
-+              if (!isPdCliInput(frame.input))
-+                return { ok: false, error: "CLI 标准输入或文件传输参数无效" };
-+              return await tauriApi.pdExecuteCli(
-+                frame.args as string[],
-+                frame.input,
-+              );
-+            }
-+            return await tauriApi.pdExecuteCli(frame.args as string[]);
-+          } catch (error) {
-+            const reason =
-+              error instanceof Error
-+                ? error.message
-+                : typeof error === "string"
-+                  ? error
-+                  : "小助手调用失败，请检查本机安装和运行状态";
-+            return { ok: false, error: reason };
-+          }
-+        })().finally(() => {
-+          activeRequests.delete(id);
-+          for (const key of requests.keys()) {
-+            if (requests.size <= 128) break;
-+            if (!activeRequests.has(key)) requests.delete(key);
-+          }
-+        });
-+      }
-       requests.set(id, result);
-     }
-     void result.then((output) => {
-@@ -72,7 +94,7 @@ export function createPdChatBridge(
- export function isPdCliArgs(value: unknown): value is string[] {
-   if (
-     !Array.isArray(value) ||
--    value.length < 2 ||
-+    value.length < 1 ||
-     value.length > 128 ||
-     !["cli", "browser"].includes(value[0]) ||
-     value.some(
-@@ -81,15 +103,31 @@ export function isPdCliArgs(value: unknown): value is string[] {
-     )
-   )
-     return false;
--  if (value[0] === "browser") return true;
--  const direct = ["status", "describe", "capabilities", "health"];
--  if (direct.includes(value[1])) return value.length === 2;
--  if (value[1] === "access") return value.length === 3 && value[2] === "list";
--  return (
--    ["window", "screen", "mouse", "keyboard", "ocr", "browser"].includes(
--      value[1],
--    ) && value.length >= 3
--  );
-+  return true;
-+}
-+
-+export function isPdCliInput(value: unknown): boolean {
-+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-+  const input = value as Record<string, unknown>;
-+  if (
-+    Object.keys(input).some(
-+      (key) => !["stdin", "uploads", "downloads"].includes(key),
-+    )
-+  )
-+    return false;
-+  if (
-+    input.stdin !== undefined &&
-+    (typeof input.stdin !== "string" || input.stdin.length > 1024 * 1024)
-+  )
-+    return false;
-+  for (const key of ["uploads", "downloads"]) {
-+    if (
-+      input[key] !== undefined &&
-+      (!Array.isArray(input[key]) || input[key].length > 128)
-+    )
-+      return false;
-+  }
-+  return JSON.stringify(input).length <= 8 * 1024 * 1024;
- }
- 
- export function pdCliErrorMessage(output: unknown): string {
-diff --git a/src/lib/tauriApi.ts b/src/lib/tauriApi.ts
-index 82201316d246ac9a45593d3ab29c66e928482cc2..bd73baa7ef86c3dc116f303870fd3225aeec9e43 100644
---- a/src/lib/tauriApi.ts
-+++ b/src/lib/tauriApi.ts
-@@ -4,7 +4,11 @@ import { emit, listen } from "@tauri-apps/api/event";
- import type { AppConfig, MascotId } from "./types";
- 
- export const tauriApi = {
--  pdExecuteCli: (args: string[]) => invoke<unknown>("pd_execute_cli", { args }),
-+  pdExecuteCli: (args: string[], input?: unknown) =>
-+    invoke<unknown>(
-+      "pd_execute_cli",
-+      input === undefined ? { args } : { args, input },
-+    ),
-   loadConfig: () => invoke<AppConfig>("load_config"),
-   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
-   patchConfig: (patch: Partial<AppConfig>) =>
-diff --git a/src/main.tsx b/src/main.tsx
-index 452d9d3549cb400231ecc1b0139eda1c3041f691..6e40ff4718b8289a19c471e173d3466512f752bc 100644
---- a/src/main.tsx
-+++ b/src/main.tsx
-@@ -2,11 +2,13 @@ import React from "react";
- import ReactDOM from "react-dom/client";
- 
- import "./App.css";
-+import { APP_NAME } from "./lib/brand";
- import { getWindowLabel } from "./lib/tauriWindowApi";
- import ChatWindow from "./windows/ChatWindow";
- import PetWindow from "./windows/PetWindow";
- import SettingsWindow from "./windows/SettingsWindow";
- 
-+document.title = APP_NAME;
- const label = getWindowLabel();
- document.documentElement.dataset.windowLabel = label;
- 
-diff --git a/src/windows/SettingsWindow.tsx b/src/windows/SettingsWindow.tsx
-index c5475c732d530e56ad822cad339ca17fa699557b..610964e43cc18fe00ececd9f047f9a15022b08d9 100644
---- a/src/windows/SettingsWindow.tsx
-+++ b/src/windows/SettingsWindow.tsx
-@@ -1,5 +1,6 @@
- import { useEffect, useRef, useState } from "react";
- 
-+import { APP_NAME } from "../lib/brand";
- import ShortcutRecorder from "../components/ShortcutRecorder";
- import WindowCloseButton from "../components/WindowCloseButton";
- import {
-@@ -476,7 +477,7 @@ export default function SettingsWindow() {
-             <div className="settings-rows settings-about">
-               <div className="settings-row">
-                 <span>应用</span>
--                <span>OctopPet</span>
-+                <span>{APP_NAME}</span>
-               </div>
-               <div className="settings-row">
-                 <span>版本</span>
-diff --git a/src/lib/brand.ts b/src/lib/brand.ts
-new file mode 100644
-index 0000000000000000000000000000000000000000..2cd42edea8df91eabc1ec2e05b430fce249c76cd
---- /dev/null
-+++ b/src/lib/brand.ts
-@@ -0,0 +1,3 @@
-+import { productName } from "../../src-tauri/tauri.conf.json";
-+
-+export const APP_NAME = productName;
-diff --git a/docs/upstream-sync/PALDEE_SYNC.md b/docs/upstream-sync/PALDEE_SYNC.md
-new file mode 100644
-index 0000000000000000000000000000000000000000..7df8dab46ec30c2e8e3e0697f0e40258029452d4
---- /dev/null
-+++ b/docs/upstream-sync/PALDEE_SYNC.md
-@@ -0,0 +1,75 @@
-+# Paldee Pet 品牌与上游同步流程
-+
-+记录日期：2026-10-08。本仓库继续独立维护，不向小助手仓库复制源码。
-+
-+## 修改边界
-+
-+品牌名称的唯一来源是 `src-tauri/tauri.conf.json` 的 `productName`。
-+`src/lib/brand.ts` 提供前端名称，设置页和页面标题读取它；托盘读取 Tauri 配置；组件打包器同样读取该字段。
-+聊天原生窗口标题在同一配置中显式设置为 Paldee Pet；修改品牌时同时核对它。宠物窗口空标题保留，避免 Windows 残留标题条。
-+
-+保留 `com.octop.pet` 应用/凭据标识、`octoppet` 组件 ID、`octoppet-component@1` 和 `pd-chat-cli@2` 协议；独立用户数据路径保持不变。不要把远程 Octop 服务名称全部替换成 Paldee。图标本次保留；以后品牌资源放在独立目录，按打包配置接入。原作者版权、LICENSE 和上游来源不得删除。
-+
-+| 扩展         | 独立文件                                     | 合并时检查的已有文件                                             |
-+| ------------ | -------------------------------------------- | ---------------------------------------------------------------- |
-+| 品牌         | src/lib/brand.ts、本说明                     | tauri.conf.json、main.tsx、SettingsWindow.tsx、tray.rs、打包脚本 |
-+| 聊天桥接     | pdChatBridge.ts、pd_bridge_cmd.rs            | useChatController.ts、tauriApi.ts、lib.rs                        |
-+| 可选组件     | component_runtime.rs、scripts/_pd_component_ | Cargo.toml/lock、lib.rs、config_cmd.rs、secrets_cmd.rs           |
-+| 太极眼睛动画 | mascot.css、MascotImage.test.tsx             | MascotImage.tsx                                                  |
-+
-+## 第一次同步前
-+
-+当前 origin 是自有仓库 https://github.com/xiaozs-com/OctopPet.git。尚未配置 upstream，且为浅克隆。先从原项目页面确认 **OctopPet 原仓库 URL 和默认分支**；不要把 Octop 服务端仓库或 origin 当作 Pet 上游。本次没有新增远端、联网拉取、合并或提交。
-+
-+以下命令在仓库目录的 PowerShell 执行；尖括号是待填内容，不能直接照抄执行。
-+
-+```powershell
-+git status --short
-+git remote -v
-+git rev-parse --is-shallow-repository
-+git remote add upstream <确认的-OctopPet-仓库URL>
-+git fetch upstream
-+```
-+
-+已经有 upstream 时先核对地址，不重复添加。若浅历史无法找到共同祖先，补充对应远端历史，必要时使用 `git fetch --unshallow origin` 并重新 fetch upstream；确认 `git merge-base HEAD upstream/<默认分支>` 能返回共同祖先。失败时先查清仓库来源，禁止用 `--allow-unrelated-histories` 强行合并。
-+
-+## 每次同步
-+
-+1. 先备份整个当前工作目录中的源文件和未跟踪文件，用户数据另外备份。`git diff` 不包含未跟踪文件，不能单独当完整备份。查看 `git status --short`；有未提交工作时先由维护者审查并提交，或明确保存后再继续。不要直接 reset、clean 或覆盖文件。本次工作仍未提交。
-+2. 在干净工作区记录当前提交并建立恢复分支，再在同步分支操作：
-+
-+```powershell
-+git rev-parse HEAD
-+git branch backup/paldee-before-sync-<日期>
-+git switch -c codex/sync-octoppet-<日期>
-+git fetch upstream
-+git log --oneline HEAD..upstream/<默认分支>
-+git diff HEAD...upstream/<默认分支> -- src src-tauri package.json package-lock.json
-+git merge --no-commit --no-ff upstream/<默认分支>
-+```
-+
-+3. 冲突按上表逐项迁移少量接线，独立模块保留；不要整文件选择 ours/theirs。特别检查聊天创建/接收/发送连接、Tauri 命令注册、用户数据和 keyring。不要恢复桥接授权弹窗、增加公网端口或要求 SSH。保留新上游的安全修复与正常聊天行为。
-+4. 检查未解决冲突，运行 Windows 等价 `make all`：
-+
-+```powershell
-+git diff --name-only --diff-filter=U
-+powershell -ExecutionPolicy Bypass -File scripts/check-windows.ps1
-+git diff --check
-+```
-+
-+5. 验证设置页名称、托盘提示、聊天、太极仅眼睛动画；按 `docs/OCTOPPET_COMPONENT.md` 构建并运行组件验收。用户数据、重复启动、停止、异常退出、中文空格路径都必须通过。Mac 手工测试需另行执行，Windows 通过不代表 Mac 通过。
-+6. 更新 CHANGELOG、同步日期/上游提交/冲突位置/测试结果，审查后由维护者提交。合并回维护分支、push 和发布是单独步骤；源码同步不等于发布安装包。
-+
-+合并期间要放弃时用 `git merge --abort`，返回原维护分支；恢复分支留存。已结束合并后不要对有工作改动的目录执行 reset；先保存工作，再从恢复分支创建新的工作分支。
-+
-+## 补丁、构建产物与发布
-+
-+日常以 Git 合并为主，`docs/upstream-sync/snapshots/` 是应急参考。旧快照的 baseline/head 仅代表生成时点，不能盲目覆盖新上游。品牌接线涉及的文件已列在上表；最新组件补丁导出器已纳入品牌接线及版本文件。快照必须在最终修改后重新生成，不能把旧快照当作当前完整源码。组件补丁使用 `python scripts/export_pd_component_patch.py --base <明确的基线提交>` 重新生成；它不涵盖所有历史桥接和太极改动。
-+
-+已有 0.2.0 ZIP 是本次更名前的已验收包，不能宣称它已经显示 Paldee Pet。当前品牌版使用 0.2.2，以后构建应使用新版本，并同步 package.json、tauri.conf.json、Cargo.toml 和 Cargo.lock 根包版本，再重新计算最终 ZIP 的 size/sha256、生成未签名清单、验收和受控签名。不得覆盖已发布版本，不能沿用旧哈希/签名。对外包从 0.2.1 起改为 `paldee-pet-<version>-windows-x64.zip`，入口为 `paldee-pet.exe`，发布目录为 `/sah/components/paldee-pet/`。打包器在复制时改名，不修改 Cargo 包名。小助手更新须先按旧清单入口停止旧版本，再按新清单入口启动，不硬编码旧入口。内部 ID 不变，目录维护者应替换同 ID 的条目，避免重复。未上传，不修改全局 catalog.json 或 Cua 文件。
-+
-+0.2.2 增加 launchable 与默认关闭的 start_with_helper 声明；小助手调用层补丁独立保存为 snapshots/helper-pet-startup.patch。同步主程序后检查组件页异步打开、主窗口一次性启动钩子、读取已保存开关及错误提示，不向 Pet 仓库复制小助手源码。
-+
-+0.2.3 全 CLI 接线涉及 pdChatBridge.ts / tauriApi.ts / pd_bridge_cmd.rs；参数范围只限制固定 helper CLI 根，不列举子命令。独立桥接传输细节及服务端模块更新留在桥接仓库；服务端不修改 Octop API，已有 ws.py 补丁升级兼容性仍要检查。完整记录见 ../PALDEE_PET_FULL_CLI.md。
-+
-+2026-10-09 目录精简：打包器不再在 catalog-entry.json 输出 version/entry，验证改为 ZIP component.json 与 latest 清单版本及入口一致；目录只核对稳定 ID 和平台。Pet 与 Cua 分类统一为“交互增强”；Cua 的 packaging/windows/create_release_metadata.ps1 同步修改分类。本地网站全局目录重新签署，保留其他字段和条目。普通版本更新无需重生成目录；只有目录身份、分类或清单地址变化才合并并签名。已有 ZIP、latest 清单及 Cua 发布文件不改。
-diff --git a/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
-new file mode 100644
-index 0000000000000000000000000000000000000000..83f4b9a0032ffa35e512b213918679a69b73df5c
---- /dev/null
-+++ b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
-@@ -0,0 +1,36 @@
-+# Paldee Pet 0.2.1 组件验收
-+
-+记录日期：2026-10-08。本报告对应本地品牌版，不表示已签名、上传或发布。
-+
-+## 命名与兼容
-+
-+显示名 Paldee Pet；ZIP 为 paldee-pet-0.2.1-windows-x64.zip；入口 paldee-pet.exe；服务器目录 /www/wwwroot/xiaozs/sah/components/paldee-pet/。
-+内部组件 ID octoppet、协议 octoppet-component@1、聊天桥接 pd-chat-cli@2、用户数据及 keyring 标识不变。只支持 Windows x64。
-+
-+## 修改文件
-+
-+- scripts/package_pd_component.py：新入口、ZIP 名、输出目录和 HTTPS 下载地址及目录校验。
-+- scripts/test_pd_component.py：按新入口验收，仍验证元数据、架构、中文空格路径、并发和重复启动、正常停止、异常退出、超时、协议不兼容和独立数据保留。
-+- package.json、package-lock.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、Cargo.lock：根包版本 0.2.1，依赖版本不变。
-+- src-tauri/src/component_runtime.rs：实际验收发现同时启动时可能提前关闭管道；仅 start/status 对 EOF/断管做有总超时约束的重试，不重试其他操作；竞争实例退出码 0 时继续查询既有实例，不误报启动失败。start 请求使用同作用域 Windows 命名互斥锁，等待计入总超时，异常退出由系统释放；并发冷启动验收连续执行五轮。
-+- scripts/export_pd_component_patch.py：补丁纳入品牌接线与版本文件；不操作索引、分支或远端。
-+- CHANGELOG.md、组件规范说明、同步流程及历史验收提示：更新发布路径和新旧包边界。
-+
-+品牌来源仍为 Tauri productName；设置页、页面标题、托盘和清单共用它。原始 Cargo 产物名保留，复制进 ZIP 时改名，不给上游增加包名修改。
-+
-+## 发布和联调边界
-+
-+latest-windows-x64.json 是未签名清单，签名前留存 unsigned 副本；不得直接用于线上安装。不读取产品私钥，不生成全局 catalog.json，不覆盖 Cua 文件。目录维护者应更新原 octoppet ID 条目的清单地址，不能另造重复 ID。
-+已有 0.2.0 包原样保留。更新须先按旧清单入口正常停止，再按新清单入口启动。小助手真实签名安装、更新、卸载和调用层联调仍未执行；远程 Octop 连接和屏幕操作没有在本轮重新测试。Windows 需要现有 WebView2；不宣称 x86 或 Mac 组件支持。
-+
-+运行报告见输出目录 runtime-acceptance.json；原生源码差异通过 Git 审查，同步步骤见 [维护流程](upstream-sync/PALDEE_SYNC.md)。
-+
-+## 最终产物与验证结果
-+
-+Windows 等价 make all 通过：前端 130 项、Rust 27 项；最终启动互斥修改后 clippy -D warnings 与 Rust 27 项复测通过。生产构建通过；真实解压包 11 项验收全部通过（41.180 秒），包括五轮并发冷启动、中文空格路径、重复启动、显隐、正常停止、异常恢复、超时、协议拒绝及整个组件目录卸载后独立用户数据保留。
-+
-+- `D:\ai\OctopPet\build\component-release\paldee-pet\0.2.1\paldee-pet-0.2.1-windows-x64.zip`：15378458 字节；SHA-256 `83a5c4a2f2cb3cdc35d609997af2ed4be8d4cdff69137de027dc27bdf84ceb85`。
-+- `D:\ai\OctopPet\build\component-release\paldee-pet\latest-windows-x64.json`：435 字节；SHA-256 `e372de98e19e24252e4ba7642ffd0a76194285ae2d0708c035a5718c85fa3ce8`。
-+- `D:\ai\OctopPet\build\component-release\paldee-pet\catalog-entry.json`：508 字节；SHA-256 `06ea920b22f9f4bd38ff326ca920a4709df3c9f66c691c2e2ad4fce2b992a6d6`。
-+
-+ZIP 包含实际 x64 入口、component.json、LICENSE 与桥接及运行许可文件；元数据 ID/版本/架构/入口一致，解压和 CRC 校验通过，size/sha256 来自最终 ZIP。latest 清单与 unsigned 副本完全一致。未提交、推送、签名或上传。
-diff --git a/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
-new file mode 100644
-index 0000000000000000000000000000000000000000..0f3856facbc064991e775ca7e39f88928ee633a7
---- /dev/null
-+++ b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
-@@ -0,0 +1,28 @@
-+# Paldee Pet 0.2.2 打开与联动启动验收
-+
-+2026-10-08。本轮保留 0.2.1 包及先前记录；新版本才增加打开和可选联动启动声明。
-+
-+设置名称：随“屏幕自动化小助手”启动。默认关闭，保存后下次启动主程序生效。仅小助手主程序启动时联动，不修改 PATH、Windows 自启动或开机任务。关闭主程序不关闭独立桌宠。不开启时不启动或下载任何组件。
-+
-+Pet 修改：scripts/package_pd_component.py、scripts/test_pd_component.py、根版本文件、CHANGELOG、组件及同步文档。内部标识和独立用户数据不变。
-+小助手独立仓库修改前基线：43913008；记录时当前提交 ad49a8ee 已包含这四个文件的相同改动（本会话未执行 commit 或 push），不可重复应用补丁；修改 components/manager.py（传递协议）、components/operations.py（固定 JSON 生命周期调用及可选启动）、gui/main_window.py（异步打开和一次性启动钩子）、tests/test_component_application_startup.py（回归）。没有复制源码入 Pet 或复制 Pet 源码入小助手。
-+
-+手动“打开”执行 start/show；联动启动只执行 start。失败不会阻塞主窗口，也不会妨碍其他已开启的组件。打开使用已安装清单入口，核对 JSON 协议/版本/ID、退出码、运行状态和 PID，不运行任意 shell。
-+
-+小助手相关测试：30 项组件测试通过；37 项可选组件/外部目录测试完成，35 通过、2 跳过。本轮新增的 11 项启动和设置回归包含默认关闭、损坏偏好、版本/协议错误、超时、失败隔离及独立配置持久化。
-+
-+签名和文件准备仍在本地产品发布目录进行。没有服务器上传、源码提交、push 或主程序安装包发布。旧主程序必须更新调用层；源码小助手重启才能加载变化。远程 Octop 和业务屏幕操作不是本轮验收目标。
-+
-+真实界面联调发现启动/状态并发时旧管道实例可能尚被客户端持有，限制为 2 会导致创建下一监听失败并退出。运行协议改用系统默认管道实例上限，仍只保留一个待连接监听；新增十轮 start/status/status 并发验收，首实例所有权和当前用户 ACL 不变。
-+
-+## 最终结果与产物
-+
-+Windows 等价 make all 通过（前端 130、Rust 27）；并发修复后 Rust clippy 与 27 项测试复测通过。实际 ZIP 的 12 项验收全部通过（43.277 秒），包含五轮并发冷启动和十轮 start/status/status 并发。真实 Tk 组件页与实际签名安装共 10 项联调通过，实际点击“打开”和“保存配置”，验证默认关闭、保存、主程序启动钩子、隐藏窗口保持、关闭偏好及卸载保留数据。
-+
-+本机组件通过现有签名安装器升级为 0.2.2，用户启动偏好没有修改。源码小助手需重启加载调用层。两份 JSON 已受信任验签，Cua 保留；网站本地目录已准备，服务器未上传。
-+
-+- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\0.2.2\paldee-pet-0.2.2-windows-x64.zip`：15379080 字节；SHA-256 `53b1af11664c6ac609afc580f01f1ab1b5dbc761dcbe889d6d5ffa273c4643db`。
-+- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\latest-windows-x64.json`：635 字节；SHA-256 `bee8b094933577a4d76373f0934243e4473fbe709f5e7b6bad475d626a9cfa61`。
-+- `D:\ai\xiaozs.com\xiaozs\sah\components\catalog.json`：2067 字节；SHA-256 `043d62387dfee3c51e0334ef921b3fadea134e6212535c74e07e9ef0fb66170e`。
-+
-+旧 0.2.1 ZIP 和已验收记录保留。失败的未发布 0.2.2 候选包和对应签名清单仅归档到缓存/暂存备份，不能上传。当前最终签名和联调报告位于 D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.2/。Pet 构建目录中的 latest 仍是 unsigned 构建产物；上传应使用网站对应本地目录中的已签名文件。
-diff --git a/docs/PALDEE_PET_FULL_CLI.md b/docs/PALDEE_PET_FULL_CLI.md
-new file mode 100644
-index 0000000000000000000000000000000000000000..69142e722d5951ee2a3d7abf4a4a01e3ff1a09c6
---- /dev/null
-+++ b/docs/PALDEE_PET_FULL_CLI.md
-@@ -0,0 +1,25 @@
-+# Paldee Pet 0.2.3 完整 CLI 桥接
-+
-+2026-10-09。本轮取消服务器、Pet 前端、Tauri 和独立桥接的命令类别白名单；保留固定小助手入口、参数类型/长度、聊天会话匹配及资源限制。未来 CLI 子命令自动透传。真实错误由本机 CLI 返回，不替换为“超出桥接支持范围”。
-+
-+新增可选标准输入及文件包，仍用原 pd-chat-cli@2 / WS/WSS；有 IO 的方法为 helper.cli.io，避免旧客户端静默丢失输入。没有改 Octop ws.py 格式、服务地址、端口、Agent 或 Skill 格式。包格式仍遵循原外部组件规范，ID octoppet、入口 paldee-pet.exe、协议 octoppet-component@1 不变。
-+
-+修正旧连接八次已完成调用后静默拒绝：最多八个并行操作，完成结果保留 128 项去重缓存。顺序连续操作不受八次限制。
-+
-+Pet 修改：src/lib/pdChatBridge.ts、pdChatBridge.test.ts、tauriApi.ts、src-tauri/src/pd_bridge_cmd.rs、根版本/锁文件、文档与源码补丁。独立桥接修改：native/src/lib.rs、main.rs、新增 transfer.rs；server/pd_chat_bridge.py、pd_cli_proxy.py及测试、README、升级说明和独立服务器包脚本。桥接源码留在 D:/ai/screen-automation-device-bridge，不复制入小助手或 Pet 运行源码。
-+
-+流程安装/检查时服务器目录自动上传；既有本机流程用 workflow show 获得目录，再 --pd-download 取回源码。输入 *-file 参数自动传文件，其他输入用 --pd-upload INDEX=PATH；标准输入 UTF-8 透传。单次文本最多 1 MiB、文件最多 128 个/4 MiB；成功副本保存在独立用户目录 bridge-transfers，供异步操作继续使用，卸载组件保留。
-+
-+具体用法见独立桥接 FULL_CLI_USAGE.md；服务器更新见 SERVER_UPGRADE.md。上传后使用 /home/admin/.octop/venv/bin/python update_bridge.py 预览，停止原服务后加 --apply 更新，再按原方式启动并重新聊天。仅更新已有模块，不重打 Octop 补丁。两个端点都需本轮版本；未上传前不能声称远端已经完整支持。
-+
-+签名在本地受控产品目录使用原密钥；本仓库继续生成未签名版本清单及自身目录条目，不生成全局 catalog.json，不改 Cua 或产品签名私钥。旧版本 ZIP 保留。小助手启动设置及眼睛动画保留。
-+
-+## 最终验证与交付
-+
-+Windows `scripts/check-windows.ps1` 全绿：前端 140 项、Pet Rust 27 项；独立桥接 Rust 6 项、服务器与真实 CLI 18 项、最终 ZIP 生命周期验收 12 项通过。真实 CLI 验证包含流程 schema/inspect/install/show/validate、流程源码取回和中文标准输入写入/读取。ZIP 验证包含中文及空格路径、重复启动、正常停止、异常退出、独立用户数据保留。
-+
-+最终 Windows ZIP：15,426,748 字节，SHA-256 `5a8f39c78465c4660634db40217e07d0be3e7bfd5a7aa0f52a9b40b82be9781c`。
-+
-+服务器更新 ZIP：12,155 字节，SHA-256 `a78a94c0fe367be13992d79132a3c3368c1ed227d3d4cf805d13078ccfd6d9ff`。
-+
-+本地网站待上传文件在 `D:/ai/xiaozs.com/xiaozs/sah/components`，签名与哈希报告在 `D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.3/signing-verification.json`。已验证产品签名并保留 Cua 原条目；未上传、未 push。服务器安装和真实宠物到远端 Octop 的联调仍待手动部署；现有已安装的旧 Pet 不会因本地构建自动升级。
-diff --git a/src-tauri/src/component_runtime.rs b/src-tauri/src/component_runtime.rs
-new file mode 100644
-index 0000000000000000000000000000000000000000..60e50aa27f39b9aa7c3784840ea5412eb3fb00d0
---- /dev/null
-+++ b/src-tauri/src/component_runtime.rs
-@@ -0,0 +1,663 @@
-+//! Windows-only, current-user lifecycle control; independent of chat/CLI transport.
-+use serde::{Deserialize, Serialize};
-+use serde_json::{json, Value};
-+use std::{
-+    io,
-+    os::windows::{io::AsRawHandle, process::CommandExt},
-+    path::PathBuf,
-+    process::{Command, Stdio},
-+    ptr,
-+    sync::mpsc,
-+    time::{Duration, Instant},
-+};
-+use tauri::Manager;
-+use tokio::{
-+    io::{AsyncReadExt, AsyncWriteExt},
-+    net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions},
-+    runtime::{Builder, Runtime},
-+    time::{sleep, timeout},
-+};
-+use windows_sys::Win32::{
-+    Foundation::{
-+        CloseHandle, GetHandleInformation, LocalFree, SetHandleInformation, HANDLE,
-+        HANDLE_FLAG_INHERIT, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
-+    },
-+    Security::{
-+        Authorization::{
-+            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-+        },
-+        GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-+    },
-+    System::{
-+        Console::{
-+            AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
-+            STD_OUTPUT_HANDLE,
-+        },
-+        Pipes::GetNamedPipeServerProcessId,
-+        RemoteDesktop::ProcessIdToSessionId,
-+        Threading::{
-+            CreateMutexW, GetCurrentProcess, OpenProcess, OpenProcessToken, ReleaseMutex,
-+            WaitForSingleObject, PROCESS_SYNCHRONIZE,
-+        },
-+    },
-+};
-+
-+pub const PROTOCOL: &str = "octoppet-component@1";
-+const VERSION: &str = env!("CARGO_PKG_VERSION");
-+const MAX_FRAME: usize = 8192;
-+
-+#[derive(Debug, Serialize, Deserialize)]
-+struct Request {
-+    protocol: String,
-+    command: String,
-+}
-+
-+fn response(command: &str, running: bool, visible: bool) -> Value {
-+    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":true,
-+        "command":command,"running":running,"visible":visible,
-+        "pid":if running {Some(std::process::id())} else {None},"error":null,
-+        "data_dir":data_dir().ok(),
-+        "control_pipe":current_sid().ok().and_then(|sid| pipe_name(&sid).ok())})
-+}
-+
-+fn failure(command: &str, code: &str, message: impl ToString) -> Value {
-+    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":false,
-+        "command":command,"error":{"code":code,"message":message.to_string()}})
-+}
-+
-+fn command_valid(command: &str) -> bool {
-+    matches!(command, "status" | "start" | "stop" | "show" | "hide")
-+}
-+
-+pub fn data_dir() -> Result<PathBuf, String> {
-+    let path = std::env::var_os("OCTOPPET_DATA_DIR")
-+        .map(PathBuf::from)
-+        .or_else(|| std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("com.octop.pet")))
-+        .ok_or("APPDATA is unavailable")?;
-+    if !path.is_absolute() {
-+        return Err("user data directory must be absolute".into());
-+    }
-+    // Resolve existing ancestors before creating anything, including symlink targets.
-+    let mut ancestor = path;
-+    let mut suffix = Vec::new();
-+    while !ancestor.exists() {
-+        suffix.push(
-+            ancestor
-+                .file_name()
-+                .ok_or("invalid user data path")?
-+                .to_os_string(),
-+        );
-+        if !ancestor.pop() {
-+            return Err("invalid user data path".into());
-+        }
-+    }
-+    let mut path = ancestor.canonicalize().map_err(|e| e.to_string())?;
-+    for name in suffix.into_iter().rev() {
-+        path.push(name);
-+    }
-+    let exe_dir = std::env::current_exe()
-+        .map_err(|e| e.to_string())?
-+        .parent()
-+        .ok_or("executable directory is unavailable")?
-+        .canonicalize()
-+        .map_err(|e| e.to_string())?;
-+    let managed_root = exe_dir
-+        .parent()
-+        .filter(|p| {
-+            p.file_name()
-+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("versions"))
-+        })
-+        .and_then(|p| p.parent())
-+        .unwrap_or(&exe_dir);
-+    if path.starts_with(managed_root) || managed_root.starts_with(&path) {
-+        return Err("user data must be outside the component directory".into());
-+    }
-+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-+    Ok(path)
-+}
-+
-+fn current_sid() -> io::Result<String> {
-+    unsafe {
-+        let mut token: HANDLE = ptr::null_mut();
-+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-+            return Err(io::Error::last_os_error());
-+        }
-+        let mut size = 0;
-+        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut size);
-+        // TOKEN_USER contains pointers; the allocation must have pointer alignment.
-+        let mut buffer = vec![0usize; (size as usize).div_ceil(size_of::<usize>())];
-+        let ok = GetTokenInformation(
-+            token,
-+            TokenUser,
-+            buffer.as_mut_ptr().cast(),
-+            size,
-+            &mut size,
-+        );
-+        CloseHandle(token);
-+        if ok == 0 {
-+            return Err(io::Error::last_os_error());
-+        }
-+        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
-+        let mut text = ptr::null_mut();
-+        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
-+            return Err(io::Error::last_os_error());
-+        }
-+        let mut len = 0;
-+        while *text.add(len) != 0 {
-+            len += 1;
-+        }
-+        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
-+        LocalFree(text.cast());
-+        Ok(sid)
-+    }
-+}
-+
-+fn pipe_name(sid: &str) -> Result<String, String> {
-+    // Fixed FNV-1a scope hash; Rust's DefaultHasher is not stable across releases.
-+    let mut hash = 0xcbf29ce484222325u64;
-+    for byte in data_dir()?.to_string_lossy().to_lowercase().as_bytes() {
-+        hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
-+    }
-+    let mut session = 0;
-+    unsafe {
-+        if ProcessIdToSessionId(std::process::id(), &mut session) == 0 {
-+            return Err(io::Error::last_os_error().to_string());
-+        }
-+    }
-+    let mode = if cfg!(debug_assertions) {
-+        "dev"
-+    } else {
-+        "release"
-+    };
-+    Ok(format!(
-+        r"\\.\pipe\octoppet-{sid}-{session}-{mode}-{:x}",
-+        hash
-+    ))
-+}
-+
-+fn create_pipe(name: &str, sid: &str, first: bool) -> io::Result<NamedPipeServer> {
-+    // Explicit current-user ACL; no Everyone/anonymous or remote access.
-+    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})\0").encode_utf16().collect();
-+    unsafe {
-+        let mut descriptor = ptr::null_mut();
-+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
-+            sddl.as_ptr(),
-+            1,
-+            &mut descriptor,
-+            ptr::null_mut(),
-+        ) == 0
-+        {
-+            return Err(io::Error::last_os_error());
-+        }
-+        let mut attributes = SECURITY_ATTRIBUTES {
-+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-+            lpSecurityDescriptor: descriptor,
-+            bInheritHandle: 0,
-+        };
-+        let pipe = ServerOptions::new()
-+            .first_pipe_instance(first)
-+            .reject_remote_clients(true)
-+            // Clients may briefly retain a disconnected instance after acknowledging.
-+            // Use the default limit while keeping only one pending server listener.
-+            .create_with_security_attributes_raw(
-+                name,
-+                (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
-+            );
-+        LocalFree(descriptor);
-+        pipe
-+    }
-+}
-+
-+fn runtime() -> Runtime {
-+    Builder::new_current_thread()
-+        .enable_all()
-+        .build()
-+        .expect("component runtime")
-+}
-+
-+async fn read_frame<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<Vec<u8>> {
-+    let len = stream.read_u32_le().await? as usize;
-+    if len == 0 || len > MAX_FRAME {
-+        return Err(io::Error::new(
-+            io::ErrorKind::InvalidData,
-+            "invalid frame size",
-+        ));
-+    }
-+    let mut frame = vec![0; len];
-+    stream.read_exact(&mut frame).await?;
-+    Ok(frame)
-+}
-+
-+async fn write_frame<W: AsyncWriteExt + Unpin>(stream: &mut W, value: &Value) -> io::Result<()> {
-+    let frame = serde_json::to_vec(value)?;
-+    if frame.len() > MAX_FRAME {
-+        return Err(io::Error::new(
-+            io::ErrorKind::InvalidData,
-+            "response too large",
-+        ));
-+    }
-+    stream.write_u32_le(frame.len() as u32).await?;
-+    stream.write_all(&frame).await
-+}
-+
-+async fn rpc(name: &str, command: &str) -> io::Result<Value> {
-+    let mut client = loop {
-+        match ClientOptions::new().open(name) {
-+            Ok(client) => break client,
-+            Err(e) if e.raw_os_error() == Some(231) => sleep(Duration::from_millis(25)).await,
-+            Err(e) => return Err(e),
-+        }
-+    };
-+    write_frame(&mut client, &json!({"protocol":PROTOCOL,"command":command})).await?;
-+    let value: Value = serde_json::from_slice(&read_frame(&mut client).await?)?;
-+    let mut server_pid = 0;
-+    if unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut server_pid) } == 0 {
-+        return Err(io::Error::last_os_error());
-+    }
-+    if value["protocol"] != PROTOCOL || value["id"] != "octoppet" {
-+        return Err(io::Error::new(
-+            io::ErrorKind::InvalidData,
-+            "incompatible response",
-+        ));
-+    }
-+    if value["running"] == true && value["pid"].as_u64() != Some(server_pid as u64) {
-+        return Err(io::Error::new(
-+            io::ErrorKind::InvalidData,
-+            "process identity mismatch",
-+        ));
-+    }
-+    // Keep the server connected until its entire reply has been consumed.
-+    client.write_u8(1).await?;
-+    Ok(value)
-+}
-+
-+// Startup can briefly close a connection before the GUI event loop is ready.
-+// Retry only idempotent probes; the caller's total deadline still bounds this loop.
-+async fn startup_rpc(name: &str, command: &str) -> io::Result<Value> {
-+    loop {
-+        match rpc(name, command).await {
-+            Err(e)
-+                if matches!(command, "start" | "status")
-+                    && matches!(
-+                        e.kind(),
-+                        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
-+                    ) =>
-+            {
-+                sleep(Duration::from_millis(25)).await;
-+            }
-+            result => return result,
-+        }
-+    }
-+}
-+
-+fn process_running(pid: u32) -> bool {
-+    unsafe {
-+        let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-+        if process.is_null() {
-+            return false;
-+        }
-+        let running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
-+        CloseHandle(process);
-+        running
-+    }
-+}
-+
-+async fn control(name: &str, command: &str) -> io::Result<Value> {
-+    match startup_rpc(name, command).await {
-+        Ok(mut value) => {
-+            if command == "stop" && value["ok"] == true {
-+                if let Some(pid) = value["pid"].as_u64() {
-+                    while process_running(pid as u32) {
-+                        sleep(Duration::from_millis(25)).await;
-+                    }
-+                }
-+                value["running"] = false.into();
-+                value["visible"] = false.into();
-+                value["pid"] = Value::Null;
-+            }
-+            Ok(value)
-+        }
-+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-+            if matches!(command, "status" | "stop") {
-+                return Ok(response(command, false, false));
-+            }
-+            if command != "start" {
-+                return Ok(failure(command, "NOT_RUNNING", "start the component first"));
-+            }
-+            let mut child = spawn_host()?;
-+            loop {
-+                match startup_rpc(name, "start").await {
-+                    Ok(value) => return Ok(value),
-+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-+                    Err(e) => return Err(e),
-+                }
-+                if let Some(status) = child.try_wait()? {
-+                    // A competing host exits successfully after finding the existing owner.
-+                    // Keep probing that owner instead of reporting a failed launch.
-+                    if !status.success() {
-+                        return Ok(failure(
-+                            command,
-+                            "START_FAILED",
-+                            format!("host exited: {status}"),
-+                        ));
-+                    }
-+                }
-+                sleep(Duration::from_millis(50)).await;
-+            }
-+        }
-+        Err(e) => Err(e),
-+    }
-+}
-+
-+struct StartLock(HANDLE);
-+
-+impl StartLock {
-+    fn acquire(pipe_name: &str, milliseconds: u32) -> io::Result<Self> {
-+        let name: Vec<u16> = format!("Local\\{}-start", pipe_name.replace('\\', "_"))
-+            .encode_utf16()
-+            .chain(Some(0))
-+            .collect();
-+        unsafe {
-+            let handle = CreateMutexW(ptr::null(), 0, name.as_ptr());
-+            if handle.is_null() {
-+                return Err(io::Error::last_os_error());
-+            }
-+            match WaitForSingleObject(handle, milliseconds) {
-+                WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
-+                result => {
-+                    let error = if result == WAIT_TIMEOUT {
-+                        io::Error::new(
-+                            io::ErrorKind::TimedOut,
-+                            "another start is still in progress",
-+                        )
-+                    } else {
-+                        io::Error::last_os_error()
-+                    };
-+                    CloseHandle(handle);
-+                    Err(error)
-+                }
-+            }
-+        }
-+    }
-+}
-+
-+impl Drop for StartLock {
-+    fn drop(&mut self) {
-+        unsafe {
-+            ReleaseMutex(self.0);
-+            CloseHandle(self.0);
-+        }
-+    }
-+}
-+
-+fn spawn_host() -> io::Result<std::process::Child> {
-+    // Giving the child NUL stdio alone does not exclude other inherited pipe handles.
-+    // A lingering capture handle would make the controller wait until the GUI exits.
-+    let mut inherited = Vec::new();
-+    unsafe {
-+        for kind in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-+            let handle = GetStdHandle(kind);
-+            let mut flags = 0;
-+            if GetHandleInformation(handle, &mut flags) != 0 && flags & HANDLE_FLAG_INHERIT != 0 {
-+                if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) == 0 {
-+                    return Err(io::Error::last_os_error());
-+                }
-+                inherited.push((handle, flags));
-+            }
-+        }
-+    }
-+    let result = (|| {
-+        Command::new(std::env::current_exe()?)
-+            .arg("--component-host")
-+            .current_dir(data_dir().map_err(io::Error::other)?)
-+            .stdin(Stdio::null())
-+            .stdout(Stdio::null())
-+            .stderr(Stdio::null())
-+            .creation_flags(0x08000000)
-+            .spawn()
-+    })();
-+    for (handle, flags) in inherited {
-+        unsafe {
-+            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags & HANDLE_FLAG_INHERIT);
-+        }
-+    }
-+    result
-+}
-+
-+fn print_result(value: Value) -> ! {
-+    let code = if value["ok"] == true {
-+        0
-+    } else {
-+        match value["error"]["code"].as_str() {
-+            Some("INVALID_ARGUMENT") => 2,
-+            Some("UNSUPPORTED_PROTOCOL") => 3,
-+            Some("NOT_RUNNING") => 4,
-+            Some("TIMEOUT") => 5,
-+            Some("START_FAILED") => 6,
-+            Some("WINDOW_ERROR") => 9,
-+            _ => 8,
-+        }
-+    };
-+    println!("{value}");
-+    std::process::exit(code)
-+}
-+
-+pub struct Host {
-+    runtime: Runtime,
-+    pipe: NamedPipeServer,
-+    name: String,
-+    sid: String,
-+}
-+
-+/// Called before Tauri creates any windows; the first pipe instance is the owner lock.
-+pub fn entry() -> Host {
-+    let args: Vec<String> = std::env::args().skip(1).collect();
-+    let sid = current_sid().unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
-+    let name = pipe_name(&sid).unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
-+    let runtime = runtime();
-+    if !args.is_empty() && args != ["--component-host"] {
-+        // GUI builds have no console by default; preserve redirected handles from callers.
-+        unsafe {
-+            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
-+            if stdout.is_null() || stdout == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-+                AttachConsole(ATTACH_PARENT_PROCESS);
-+            }
-+        }
-+        let command = args.first().map(String::as_str).unwrap_or("");
-+        let mut milliseconds = 15000;
-+        let valid = command_valid(command)
-+            && args.get(1).map(String::as_str) == Some("--json")
-+            && (args.len() == 2
-+                || (args.len() == 4
-+                    && args[2] == "--timeout-ms"
-+                    && args[3].parse::<u64>().is_ok_and(|n| {
-+                        milliseconds = n;
-+                        (100..=15000).contains(&n)
-+                    })));
-+        if !valid {
-+            print_result(failure(
-+                command,
-+                "INVALID_ARGUMENT",
-+                "expected command --json [--timeout-ms 100..15000]",
-+            ));
-+        }
-+        let deadline = Instant::now() + Duration::from_millis(milliseconds);
-+        let start_lock = if command == "start" {
-+            Some(
-+                StartLock::acquire(&name, milliseconds as u32).unwrap_or_else(|e| {
-+                    let code = if e.kind() == io::ErrorKind::TimedOut {
-+                        "TIMEOUT"
-+                    } else {
-+                        "IO_ERROR"
-+                    };
-+                    print_result(failure(command, code, e))
-+                }),
-+            )
-+        } else {
-+            None
-+        };
-+        let value = runtime.block_on(async {
-+            timeout(
-+                deadline.saturating_duration_since(Instant::now()),
-+                control(&name, command),
-+            )
-+            .await
-+        });
-+        drop(start_lock);
-+        print_result(match value {
-+            Ok(Ok(value)) => value,
-+            Ok(Err(e)) => failure(command, "IO_ERROR", e),
-+            Err(_) => failure(
-+                command,
-+                "TIMEOUT",
-+                "operation exceeded its deadline; inspect status before retry",
-+            ),
-+        });
-+    }
-+    let pipe = {
-+        let _guard = runtime.enter();
-+        match create_pipe(&name, &sid, true) {
-+            Ok(pipe) => pipe,
-+            Err(_) => {
-+                // A direct repeat launch is a no-op, never opens a second UI or steals focus.
-+                let result = runtime.block_on(async {
-+                    timeout(Duration::from_secs(15), startup_rpc(&name, "status")).await
-+                });
-+                if matches!(result, Ok(Ok(ref value)) if value["ok"] == true) {
-+                    std::process::exit(0);
-+                }
-+                print_result(failure(
-+                    "start",
-+                    "IO_ERROR",
-+                    "unable to own the component pipe",
-+                ));
-+            }
-+        }
-+    };
-+    Host {
-+        runtime,
-+        pipe,
-+        name,
-+        sid,
-+    }
-+}
-+
-+fn dispatch(app: &tauri::AppHandle, request: Request) -> Value {
-+    if request.protocol != PROTOCOL {
-+        return failure(
-+            &request.command,
-+            "UNSUPPORTED_PROTOCOL",
-+            "expected octoppet-component@1",
-+        );
-+    }
-+    if !command_valid(&request.command) {
-+        return failure(
-+            &request.command,
-+            "INVALID_ARGUMENT",
-+            "unknown lifecycle command",
-+        );
-+    }
-+    let Some(pet) = app.get_webview_window("pet") else {
-+        return failure(
-+            &request.command,
-+            "WINDOW_ERROR",
-+            "pet window is unavailable",
-+        );
-+    };
-+    let operation = match request.command.as_str() {
-+        "show" => pet.show(),
-+        "hide" => {
-+            for label in ["chat", "settings"] {
-+                if let Some(window) = app.get_webview_window(label) {
-+                    let _ = window.hide();
-+                }
-+            }
-+            pet.hide()
-+        }
-+        _ => Ok(()),
-+    };
-+    match operation {
-+        Ok(()) => response(&request.command, true, pet.is_visible().unwrap_or(false)),
-+        Err(e) => failure(&request.command, "WINDOW_ERROR", e),
-+    }
-+}
-+
-+impl Host {
-+    pub fn serve(self, app: tauri::AppHandle) {
-+        std::thread::spawn(move || {
-+            self.runtime.block_on(async move {
-+                let mut pipe = self.pipe;
-+                loop {
-+                    let connected = pipe.connect().await;
-+                    // Keep a fresh listener alive before releasing the previous instance.
-+                    // Reusing a disconnected overlapped pipe can retain stale read readiness.
-+                    let next = match create_pipe(&self.name, &self.sid, false) {
-+                        Ok(next) => next,
-+                        Err(_) => {
-+                            app.exit(8);
-+                            break;
-+                        }
-+                    };
-+                    if connected.is_err() {
-+                        let _ = pipe.disconnect();
-+                        pipe = next;
-+                        continue;
-+                    }
-+                    let result = timeout(Duration::from_secs(3), async {
-+                        let request: Request =
-+                            serde_json::from_slice(&read_frame(&mut pipe).await?)?;
-+                        let (send, receive) = mpsc::sync_channel(1);
-+                        let handle = app.clone();
-+                        app.run_on_main_thread(move || {
-+                            let _ = send.send(dispatch(&handle, request));
-+                        })
-+                        .map_err(io::Error::other)?;
-+                        let value = receive
-+                            .recv_timeout(Duration::from_secs(2))
-+                            .map_err(io::Error::other)?;
-+                        write_frame(&mut pipe, &value).await?;
-+                        let _ = pipe.read_u8().await?;
-+                        Ok::<bool, io::Error>(value["ok"] == true && value["command"] == "stop")
-+                    })
-+                    .await;
-+                    let _ = pipe.disconnect();
-+                    pipe = next;
-+                    if matches!(result, Ok(Ok(true))) {
-+                        app.exit(0);
-+                        break;
-+                    }
-+                }
-+            })
-+        });
-+    }
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    #[test]
-+    fn only_lifecycle_commands_are_accepted() {
-+        for command in ["status", "start", "stop", "show", "hide"] {
-+            assert!(command_valid(command));
-+        }
-+        for command in ["exec", "shell", "window activate", ""] {
-+            assert!(!command_valid(command));
-+        }
-+    }
-+
-+    #[test]
-+    fn stopped_status_has_no_process_id() {
-+        let value = response("status", false, false);
-+        assert_eq!(value["protocol"], PROTOCOL);
-+        assert_eq!(value["id"], "octoppet");
-+        assert!(value["pid"].is_null());
-+    }
-+
-+    #[test]
-+    fn failure_is_structured() {
-+        let value = failure("show", "NOT_RUNNING", "start first");
-+        assert_eq!(value["ok"], false);
-+        assert_eq!(value["error"]["code"], "NOT_RUNNING");
-+    }
-+}
-diff --git a/scripts/build_pd_component.ps1 b/scripts/build_pd_component.ps1
-new file mode 100644
-index 0000000000000000000000000000000000000000..70d527c7c42e66c0f93200de4e73384791836baa
---- /dev/null
-+++ b/scripts/build_pd_component.ps1
-@@ -0,0 +1,28 @@
-+# Local Windows x64 component build. No installation, keys, catalog merge or upload.
-+param(
-+    [Parameter(Mandatory=$true)][string]$BridgeRoot,
-+    [string]$OutputDirectory = ""
-+)
-+$ErrorActionPreference = 'Stop'
-+Set-Location (Split-Path -Parent $PSScriptRoot)
-+function Invoke-Checked([string]$Program, [string[]]$Arguments) {
-+    & $Program @Arguments
-+    if ($LASTEXITCODE -ne 0) { throw "$Program failed: $LASTEXITCODE" }
-+}
-+if (-not [Environment]::Is64BitOperatingSystem) { throw 'Windows x64 is required' }
-+Invoke-Checked npm.cmd @('run', 'tauri', '--', 'build', '--no-bundle', '--target', 'x86_64-pc-windows-msvc')
-+$componentRustFlags = $env:RUSTFLAGS
-+try {
-+    $env:RUSTFLAGS = (($componentRustFlags + ' -C target-feature=+crt-static').Trim())
-+    Invoke-Checked cargo @('build', '--release', '--offline', '--locked', '--target', 'x86_64-pc-windows-msvc', '--manifest-path', (Join-Path $BridgeRoot 'native/Cargo.toml'))
-+} finally {
-+    $env:RUSTFLAGS = $componentRustFlags
-+}
-+$packageArguments = @(
-+    'scripts/package_pd_component.py',
-+    '--pet', 'src-tauri/target/x86_64-pc-windows-msvc/release/octop-pet.exe',
-+    '--bridge', (Join-Path $BridgeRoot 'native/target/x86_64-pc-windows-msvc/release/pd-device-bridge.exe'),
-+    '--bridge-root', $BridgeRoot
-+)
-+if ($OutputDirectory) { $packageArguments += @('--output', $OutputDirectory) }
-+Invoke-Checked python $packageArguments
-diff --git a/scripts/package_pd_component.py b/scripts/package_pd_component.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..ee7041fd4648fd083d3ad2fa1e92b5611e3de6b3
---- /dev/null
-+++ b/scripts/package_pd_component.py
-@@ -0,0 +1,226 @@
-+"""Package OctopPet with UNSIGNED manifests. No private keys, global catalogs or uploads."""
-+from __future__ import annotations
-+import argparse
-+import hashlib
-+import json
-+import os
-+import re
-+import shutil
-+import struct
-+import subprocess
-+import tempfile
-+import zipfile
-+from pathlib import Path
-+
-+ROOT = Path(__file__).resolve().parents[1]
-+ID = "octoppet"
-+PLATFORM = "windows-x64"
-+ENTRY = "paldee-pet.exe"
-+PROTOCOL = "octoppet-component@1"
-+
-+def write_json(path, value):
-+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-+
-+def pe_machine(path):
-+    with path.open("rb") as file:
-+        header = file.read(64)
-+        if len(header) != 64 or header[:2] != b"MZ":
-+            raise ValueError(f"Not a PE executable: {path}")
-+        file.seek(struct.unpack_from("<I", header, 60)[0])
-+        pe = file.read(6)
-+        if len(pe) != 6 or pe[:4] != b"PE\0\0":
-+            raise ValueError(f"Invalid PE signature: {path}")
-+        return struct.unpack_from("<H", pe, 4)[0]
-+
-+def pe_imports(path):
-+    data = path.read_bytes()
-+    pe = struct.unpack_from("<I", data, 60)[0]
-+    sections = struct.unpack_from("<H", data, pe + 6)[0]
-+    optional = pe + 24
-+    optional_size = struct.unpack_from("<H", data, pe + 20)[0]
-+    imports_rva = struct.unpack_from("<I", data, optional + 120)[0]
-+    def offset(rva):
-+        for index in range(sections):
-+            start = optional + optional_size + 40 * index
-+            virtual_size, address, raw_size, raw = struct.unpack_from("<IIII", data, start + 8)
-+            if address <= rva < address + max(virtual_size, raw_size):
-+                return raw + rva - address
-+        raise ValueError("Invalid PE import address")
-+    position = offset(imports_rva)
-+    names = []
-+    while any(data[position:position + 20]):
-+        start = offset(struct.unpack_from("<I", data, position + 12)[0])
-+        names.append(data[start:data.index(b"\0", start)].decode("ascii").lower())
-+        position += 20
-+    system = {"kernel32.dll", "advapi32.dll", "oleaut32.dll", "bcryptprimitives.dll", "ntdll.dll",
-+              "user32.dll", "shell32.dll", "comctl32.dll", "ole32.dll", "gdi32.dll", "dwmapi.dll",
-+              "shlwapi.dll", "ws2_32.dll", "bcrypt.dll"}
-+    if any(name not in system and not name.startswith("api-ms-win-") for name in names):
-+        raise ValueError(f"Unbundled non-system DLL dependency: {path.name}: {names}")
-+    return names
-+
-+def collect_licenses(destination, bridge_root):
-+    records, missing, seen = [], [], set()
-+    legal_root = ROOT / "packaging/third-party-licenses"
-+    sources = json.loads((legal_root / "SOURCES.json").read_text(encoding="utf-8"))
-+    def collect(name, version, root, license_id, extra=""):
-+        files = sorted(p for p in root.iterdir() if p.is_file() and
-+                       p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE")))
-+        if extra and (root / extra).is_file() and (root / extra) not in files:
-+            files.append(root / extra)
-+        if not files:
-+            key = name.removeprefix("rust-") + "-" + version
-+            if name.startswith("rust-unic-") and version == "0.9.0":
-+                key = "unic-0.9.0"
-+            if name in ["rust-webview2-com", "rust-webview2-com-sys"] and version == "0.38.2":
-+                key = "webview2-0.38.2"
-+            if name == "rust-webview2-com-macros" and version == "0.8.1":
-+                key = "webview2-macros-0.8.1"
-+            for record in sources.get(key, []):
-+                path = legal_root / record["file"]
-+                if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
-+                    raise ValueError(f"Pinned license fingerprint mismatch: {path}")
-+                files.append(path)
-+        if not files:
-+            missing.append(f"{name}@{version}: {license_id}")
-+            return
-+        target = destination / re.sub(r"[^a-zA-Z0-9._-]", "_", f"{name}-{version}")
-+        target.mkdir(parents=True, exist_ok=True)
-+        for file in files:
-+            shutil.copy2(file, target / file.name)
-+        source = (f"https://crates.io/api/v1/crates/{name.removeprefix('rust-')}/{version}/download"
-+                  if name.startswith("rust-") else f"https://www.npmjs.com/package/{name.removeprefix('npm-')}/v/{version}")
-+        records.append({"name": name, "version": version, "license": license_id, "source": source})
-+    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
-+    for name, info in lock["packages"].items():
-+        if not name or info.get("dev"):
-+            continue
-+        root = ROOT / name
-+        package = json.loads((root / "package.json").read_text(encoding="utf-8"))
-+        collect("npm-" + package["name"], package["version"], root, str(package.get("license", "")))
-+    for manifest in [ROOT / "src-tauri/Cargo.toml", bridge_root / "native/Cargo.toml"]:
-+        metadata = json.loads(subprocess.check_output([
-+            "cargo", "metadata", "--offline", "--locked", "--format-version", "1",
-+            "--filter-platform", "x86_64-pc-windows-msvc", "--manifest-path", str(manifest),
-+        ], text=True))
-+        resolved = {node["id"] for node in metadata["resolve"]["nodes"]}
-+        for package in metadata["packages"]:
-+            if package["id"] not in resolved or package["source"] is None or package["id"] in seen:
-+                continue
-+            seen.add(package["id"])
-+            collect("rust-" + package["name"], package["version"],
-+                    Path(package["manifest_path"]).parent, package.get("license") or "",
-+                    package.get("license_file") or "")
-+    if missing:
-+        raise ValueError("Missing dependency license texts:\n" + "\n".join(missing))
-+    write_json(destination / "THIRD_PARTY_NOTICES.json", {"dependencies": records})
-+    shutil.copy2(legal_root / "SOURCES.json", destination / "PINNED_LICENSE_SOURCES.json")
-+
-+def validate_archive(archive, manifest, catalog):
-+    if archive.stat().st_size != manifest["size"]:
-+        raise ValueError("ZIP byte size mismatch")
-+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-+    if digest != manifest["sha256"]:
-+        raise ValueError("ZIP SHA-256 mismatch")
-+    with zipfile.ZipFile(archive) as bundle:
-+        if bundle.testzip() is not None:
-+            raise ValueError("ZIP integrity failed")
-+        for name in bundle.namelist():
-+            if name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/") or ":" in name:
-+                raise ValueError("Unsafe ZIP path")
-+        metadata = json.loads(bundle.read("component.json"))
-+        if not (metadata["id"] == manifest["id"] == catalog["id"] == ID and
-+                metadata["version"] == manifest["version"] and
-+                metadata["entry"] == manifest["entry"] == ENTRY and
-+                metadata["supported_runtime_platforms"] == [manifest["platform"]] == [PLATFORM] and
-+                list(catalog["manifests"]) == [PLATFORM] and metadata["protocol"] == PROTOCOL):
-+            raise ValueError("Component metadata mismatch")
-+        if "signature" in catalog or "components" in catalog:
-+            raise ValueError("Only an unsigned single-component catalog entry is allowed")
-+        if not {"LICENSE", ENTRY, "pd-device-bridge.exe"}.issubset(bundle.namelist()):
-+            raise ValueError("Entry, bridge or license missing")
-+        with tempfile.TemporaryDirectory(prefix="octoppet-zip-check-") as temporary:
-+            bundle.extractall(temporary)
-+            for name in [ENTRY, "pd-device-bridge.exe"]:
-+                if pe_machine(Path(temporary) / name) != 0x8664:
-+                    raise ValueError("Incorrect executable architecture")
-+    return {"id": ID, "version": manifest["version"], "platform": PLATFORM,
-+            "entry": ENTRY, "size": manifest["size"], "sha256": digest, "signature": "pending"}
-+
-+def package(args):
-+    version = args.version
-+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-+        raise ValueError("Version must be x.y.z")
-+    base = args.base_url.rstrip("/")
-+    if not base.startswith("https://") or not base.endswith("/paldee-pet"):
-+        raise ValueError("Base URL must be an HTTPS paldee-pet directory")
-+    for path in [args.pet, args.bridge]:
-+        if pe_machine(path) != 0x8664:
-+            raise ValueError(f"Only Windows x64 is supported: {path}")
-+        pe_imports(path)
-+    if not (args.bridge_root / "LICENSE").is_file():
-+        raise ValueError("Bridge license is required")
-+    with tempfile.TemporaryDirectory(prefix="octoppet-version-check-") as temporary:
-+        env = dict(os.environ, OCTOPPET_DATA_DIR=temporary)
-+        result = subprocess.run([str(args.pet.resolve()), "status", "--json"],
-+                                capture_output=True, text=True, encoding="utf-8", env=env, timeout=20, check=True)
-+        status = json.loads(result.stdout)
-+        if status.get("protocol") != PROTOCOL or status.get("version") != version:
-+            raise ValueError("Executable version/protocol does not match")
-+    output = args.output.resolve()
-+    archive = output / version / f"paldee-pet-{version}-{PLATFORM}.zip"
-+    if archive.exists():
-+        raise FileExistsError("Immutable version already exists; use a new version or separate output")
-+    archive.parent.mkdir(parents=True, exist_ok=True)
-+    metadata = {"id": ID, "name": json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["productName"], "version": version,
-+                "protocol": PROTOCOL, "capabilities": ["desktop.pet@1", "desktop.helper-cli@2"],
-+                "supported_runtime_platforms": [PLATFORM], "entry": ENTRY, "launchable": True,
-+                "settings": [{"key": "start_with_helper", "name": "随“屏幕自动化小助手”启动",
-+                              "description": "默认关闭。保存后，下次启动屏幕自动化小助手时启动桌宠；不设置 Windows 系统自启动。",
-+                              "value_type": "boolean", "default": False, "restart_required": False}],
-+                "retains_user_data_on_uninstall": True}
-+    with tempfile.TemporaryDirectory(prefix="octoppet-package-") as temporary:
-+        staging = Path(temporary)
-+        shutil.copy2(args.pet, staging / ENTRY)
-+        shutil.copy2(args.bridge, staging / "pd-device-bridge.exe")
-+        shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
-+        write_json(staging / "component.json", metadata)
-+        legal = staging / "licenses"
-+        legal.mkdir()
-+        shutil.copy2(args.bridge_root / "LICENSE", legal / "PD_BRIDGE_LICENSE.txt")
-+        collect_licenses(legal, args.bridge_root)
-+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-+            for path in sorted(staging.rglob("*")):
-+                if path.is_file():
-+                    info = zipfile.ZipInfo(path.relative_to(staging).as_posix(), (2026, 1, 1, 0, 0, 0))
-+                    bundle.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
-+    manifest = {"id": ID, "version": version, "platform": PLATFORM,
-+                "download_url": f"{base}/{version}/{archive.name}",
-+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "size": archive.stat().st_size,
-+                "entry": ENTRY, "license": "MIT", "source": "https://github.com/xiaozs-com/OctopPet",
-+                "minimum_helper_version": "1.2.6"}
-+    catalog = {"id": ID, "name": metadata["name"], "category": "交互增强",
-+               "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机 PD 小助手 CLI。",
-+               "supported_platforms": ["win32"], "manifests": {PLATFORM: f"{base}/latest-{PLATFORM}.json"},
-+               "required_capabilities": [], "acquisition": "free", "retains_user_data_on_uninstall": True}
-+    write_json(output / f"latest-{PLATFORM}.unsigned.json", manifest)
-+    write_json(output / f"latest-{PLATFORM}.json", manifest)
-+    write_json(output / "catalog-entry.json", catalog)
-+    write_json(output / "package-validation.json", validate_archive(archive, manifest, catalog))
-+    (output / "UNSIGNED_MANIFEST.txt").write_text(
-+        "latest-windows-x64.json is UNSIGNED. Sign it in the controlled release environment before uploading.\n"
-+        "No private keys or global catalog.json are read, generated, merged or uploaded by this repository.\n", encoding="utf-8")
-+    return archive
-+
-+def main():
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--version", default=json.loads((ROOT / "package.json").read_text())["version"])
-+    parser.add_argument("--pet", type=Path, required=True)
-+    parser.add_argument("--bridge", type=Path, required=True)
-+    parser.add_argument("--bridge-root", type=Path, required=True)
-+    parser.add_argument("--output", type=Path, default=ROOT / "build/component-release/paldee-pet")
-+    parser.add_argument("--base-url", default="https://www.xiaozs.com/sah/components/paldee-pet")
-+    print(package(parser.parse_args()))
-+
-+if __name__ == "__main__":
-+    main()
-diff --git a/scripts/test_pd_component.py b/scripts/test_pd_component.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..99b3c3cb69e6f042ebc3784f9c986bc1d2b5c326
---- /dev/null
-+++ b/scripts/test_pd_component.py
-@@ -0,0 +1,269 @@
-+"""Windows acceptance against the real packaged executable, with isolated user data."""
-+from __future__ import annotations
-+import argparse
-+import ctypes
-+from concurrent.futures import ThreadPoolExecutor
-+import importlib.util
-+import json
-+import os
-+import shutil
-+import struct
-+import subprocess
-+import tempfile
-+import threading
-+import time
-+import unittest
-+import zipfile
-+from pathlib import Path
-+
-+spec = importlib.util.spec_from_file_location("packager", Path(__file__).with_name("package_pd_component.py"))
-+packager = importlib.util.module_from_spec(spec)
-+spec.loader.exec_module(packager)
-+OPTIONS = None
-+
-+
-+def read_exact(file, count):
-+    data = b""
-+    while len(data) < count:
-+        chunk = file.read(count - len(data))
-+        if not chunk:
-+            raise EOFError("pipe closed before the complete frame")
-+        data += chunk
-+    return data
-+
-+
-+class ComponentAcceptance(unittest.TestCase):
-+    @classmethod
-+    def setUpClass(cls):
-+        if os.name != "nt":
-+            raise unittest.SkipTest("Windows x64 runtime tests")
-+        cls.temporary = tempfile.TemporaryDirectory(prefix="octoppet-acceptance-")
-+        cls.root = Path(cls.temporary.name)
-+        cls.installation = cls.root / "组件 安装测试" / "versions" / "test-version"
-+        cls.user_data = cls.root / "独立 用户数据"
-+        cls.user_data.mkdir()
-+        cls.user_data.joinpath("retained.txt").write_text("retain-user-data", encoding="utf-8")
-+        cls.user_data.joinpath("config.json").write_text(json.dumps({
-+            "mascotId": "taiji-bot", "shortcutOpenPet": "", "shortcutOpenHome": "", "username": "",
-+        }), encoding="utf-8")
-+        cls.manifest = json.loads((OPTIONS.package_root / "latest-windows-x64.json").read_text(encoding="utf-8"))
-+        cls.catalog = json.loads((OPTIONS.package_root / "catalog-entry.json").read_text(encoding="utf-8"))
-+        cls.archive = OPTIONS.package_root / cls.manifest["version"] / f"paldee-pet-{cls.manifest['version']}-windows-x64.zip"
-+        with zipfile.ZipFile(cls.archive) as bundle:
-+            bundle.extractall(cls.installation)
-+        cls.exe = cls.installation / "paldee-pet.exe"
-+        cls.env = dict(os.environ, OCTOPPET_DATA_DIR=str(cls.user_data))
-+
-+    def invoke(self, command, expected=0, extra=(), env=None):
-+        result = subprocess.run([str(self.exe), command, "--json", *extra], env=env or self.env,
-+                                capture_output=True, text=True, encoding="utf-8", timeout=22)
-+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
-+        value = json.loads(result.stdout)
-+        self.assertEqual(value["protocol"], "octoppet-component@1")
-+        self.assertEqual(value["id"], "octoppet")
-+        self.assertEqual(value["version"], self.manifest["version"])
-+        return value
-+
-+    def setUp(self):
-+        self.invoke("stop")
-+
-+    def tearDown(self):
-+        if self.exe.exists():
-+            self.invoke("stop")
-+
-+    @classmethod
-+    def tearDownClass(cls):
-+        if cls.exe.exists():
-+            subprocess.run([str(cls.exe), "stop", "--json"], env=cls.env, capture_output=True, timeout=22)
-+        cls.temporary.cleanup()
-+
-+    def test_archive_metadata_architecture_and_allowlist(self):
-+        result = packager.validate_archive(self.archive, self.manifest, self.catalog)
-+        self.assertEqual(result["entry"], "paldee-pet.exe")
-+        with zipfile.ZipFile(self.archive) as bundle:
-+            metadata = json.loads(bundle.read("component.json"))
-+            self.assertIs(metadata["launchable"], True)
-+            self.assertEqual(metadata["settings"][0]["key"], "start_with_helper")
-+            self.assertIs(metadata["settings"][0]["default"], False)
-+        with zipfile.ZipFile(self.archive) as bundle:
-+            for name in bundle.namelist():
-+                self.assertTrue(name in ["component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe"] or
-+                                name.startswith("licenses/"), name)
-+
-+    def test_chinese_space_path_and_repeat_launch(self):
-+        first = self.invoke("start")
-+        self.assertTrue(first["running"])
-+        self.assertTrue(os.path.samefile(first["data_dir"], self.user_data))
-+        self.assertEqual(self.invoke("start")["pid"], first["pid"])
-+        # Test the ordinary double-click path as well as the JSON command.
-+        repeated = subprocess.run([str(self.exe)], env=self.env, capture_output=True, timeout=22)
-+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
-+        self.assertEqual(self.invoke("status")["pid"], first["pid"])
-+        self.assertEqual({p.name for p in self.installation.iterdir()},
-+                         {"component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe", "licenses"})
-+
-+    def test_concurrent_start_has_one_owner(self):
-+        # Repeat cold starts to cover both contenders winning the ownership race.
-+        for attempt in range(5):
-+            with self.subTest(attempt=attempt):
-+                self.invoke("stop")
-+                with ThreadPoolExecutor(max_workers=2) as pool:
-+                    values = list(pool.map(lambda _: self.invoke("start"), range(2)))
-+                self.assertEqual(values[0]["pid"], values[1]["pid"])
-+                self.assertEqual(self.invoke("status")["pid"], values[0]["pid"])
-+
-+    def test_start_and_status_queries_do_not_end_the_host(self):
-+        first = self.invoke("start")
-+        for attempt in range(10):
-+            with self.subTest(attempt=attempt), ThreadPoolExecutor(max_workers=3) as pool:
-+                values = list(pool.map(lambda command: self.invoke(command), ["start", "status", "status"]))
-+                self.assertTrue(all(value["running"] for value in values))
-+                self.assertEqual({value["pid"] for value in values}, {first["pid"]})
-+        self.assertEqual(self.invoke("status")["pid"], first["pid"])
-+
-+    def test_show_hide_and_normal_stop(self):
-+        pid = self.invoke("start")["pid"]
-+        self.assertFalse(self.invoke("hide")["visible"])
-+        self.assertFalse(self.invoke("start")["visible"])
-+        self.assertTrue(self.invoke("show")["visible"])
-+        stopped = self.invoke("stop")
-+        self.assertFalse(stopped["running"])
-+        self.assertIsNone(stopped["pid"])
-+        self.assertFalse(self.invoke("stop")["running"])
-+        self.assertFalse(self.invoke("status")["running"])
-+        self.assertIsInstance(pid, int)
-+
-+    def test_abnormal_exit_releases_ownership(self):
-+        first = self.invoke("start")
-+        # Only kill the process started in this test's private scope, after verifying its image.
-+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-+        kernel.OpenProcess.restype = ctypes.c_void_p
-+        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
-+        kernel.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
-+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-+        handle = kernel.OpenProcess(0x101001, 0, first["pid"])
-+        self.assertTrue(handle)
-+        try:
-+            buffer = ctypes.create_unicode_buffer(32768)
-+            length = ctypes.c_uint32(len(buffer))
-+            self.assertTrue(kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(length)))
-+            self.assertEqual(Path(buffer.value).resolve(), self.exe.resolve())
-+            self.assertTrue(kernel.TerminateProcess(handle, 99))
-+            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0)
-+        finally:
-+            kernel.CloseHandle(handle)
-+        deadline = time.monotonic() + 8
-+        while self.invoke("status")["running"] and time.monotonic() < deadline:
-+            time.sleep(0.1)
-+        self.assertFalse(self.invoke("status")["running"])
-+        self.assertTrue(self.invoke("start")["running"])
-+
-+    def test_invalid_commands_and_not_running(self):
-+        self.assertEqual(self.invoke("shell", expected=2)["error"]["code"], "INVALID_ARGUMENT")
-+        self.assertEqual(self.invoke("show", expected=4)["error"]["code"], "NOT_RUNNING")
-+        self.assertEqual(self.invoke("hide", expected=4)["error"]["code"], "NOT_RUNNING")
-+        self.assertEqual(self.invoke("status", expected=2, extra=("--timeout-ms", "99999"))["error"]["code"], "INVALID_ARGUMENT")
-+
-+    def test_protocol_negotiation_refuses_wrong_version(self):
-+        value = self.invoke("start")
-+        with open(value["control_pipe"], "r+b", buffering=0) as file:
-+            request = json.dumps({"protocol": "octoppet-component@99", "command": "hide"}).encode()
-+            file.write(struct.pack("<I", len(request)) + request)
-+            length = struct.unpack("<I", read_exact(file, 4))[0]
-+            result = json.loads(read_exact(file, length))
-+            file.write(b"\x01")
-+        self.assertFalse(result["ok"])
-+        self.assertEqual(result["error"]["code"], "UNSUPPORTED_PROTOCOL")
-+        self.assertTrue(self.invoke("status")["visible"])
-+
-+    def test_timeout_is_bounded_and_structured(self):
-+        name = self.invoke("status")["control_pipe"]
-+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-+        kernel.CreateNamedPipeW.restype = ctypes.c_void_p
-+        kernel.CreateNamedPipeW.argtypes = [ctypes.c_wchar_p, *([ctypes.c_uint32] * 6), ctypes.c_void_p]
-+        kernel.ConnectNamedPipe.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-+        kernel.DisconnectNamedPipe.argtypes = [ctypes.c_void_p]
-+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-+        handle = kernel.CreateNamedPipeW(name, 0x00080003, 8, 1, 8192, 8192, 1000, None)
-+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
-+        def stalled_test_server():
-+            try:
-+                kernel.ConnectNamedPipe(handle, None)
-+                time.sleep(1)
-+                kernel.DisconnectNamedPipe(handle)
-+            finally:
-+                kernel.CloseHandle(handle)
-+        thread = threading.Thread(target=stalled_test_server, daemon=True)
-+        thread.start()
-+        try:
-+            start = time.monotonic()
-+            value = self.invoke("status", expected=5, extra=("--timeout-ms", "200"))
-+            self.assertEqual(value["error"]["code"], "TIMEOUT")
-+            self.assertLess(time.monotonic() - start, 5)
-+        finally:
-+            thread.join(timeout=3)
-+        self.assertFalse(thread.is_alive())
-+
-+    def test_user_directory_inside_component_is_rejected(self):
-+        managed_root = self.installation.parent.parent
-+        forbidden = [self.installation, managed_root, managed_root / "user-data",
-+                     managed_root / "versions" / "0.1.0" / "user-data"]
-+        for path in forbidden:
-+            existed = path.exists()
-+            value = self.invoke("status", expected=8, env=dict(self.env, OCTOPPET_DATA_DIR=str(path)))
-+            self.assertEqual(value["error"]["code"], "IO_ERROR")
-+            self.assertIn("outside the component", value["error"]["message"])
-+            if not existed:
-+                self.assertFalse(path.exists())
-+
-+    def test_bad_metadata_size_hash_and_x86_are_rejected(self):
-+        for manifest in [dict(self.manifest, size=self.manifest["size"] + 1),
-+                         dict(self.manifest, sha256="0" * 64)]:
-+            with self.assertRaises(ValueError):
-+                packager.validate_archive(self.archive, manifest, self.catalog)
-+        with self.assertRaises(ValueError):
-+            packager.validate_archive(self.archive, self.manifest, dict(self.catalog, id="other"))
-+        path = self.root / "x86-fixture.exe"
-+        data = bytearray(70)
-+        data[:2] = b"MZ"
-+        struct.pack_into("<I", data, 60, 64)
-+        data[64:68] = b"PE\0\0"
-+        struct.pack_into("<H", data, 68, 0x14C)
-+        path.write_bytes(data)
-+        self.assertEqual(packager.pe_machine(path), 0x14C)
-+        with self.assertRaisesRegex(ValueError, "Only Windows x64"):
-+            packager.package(argparse.Namespace(version=self.manifest["version"],
-+                base_url="https://www.xiaozs.com/sah/components/paldee-pet", pet=path,
-+                bridge=self.installation / "pd-device-bridge.exe"))
-+
-+    def test_zz_uninstall_preserves_independent_user_data(self):
-+        self.invoke("start")
-+        self.invoke("stop")
-+        managed_root = self.installation.parent.parent
-+        self.assertTrue(managed_root.resolve().is_relative_to(self.root.resolve()))
-+        shutil.rmtree(managed_root)
-+        self.assertFalse(managed_root.exists())
-+        self.assertEqual(self.user_data.joinpath("retained.txt").read_text(encoding="utf-8"), "retain-user-data")
-+        self.assertTrue(self.user_data.joinpath("config.json").is_file())
-+
-+
-+def main():
-+    global OPTIONS
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--package-root", type=Path, required=True)
-+    parser.add_argument("--report", type=Path, required=True)
-+    OPTIONS = parser.parse_args()
-+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(ComponentAcceptance)
-+    result = unittest.TextTestRunner(verbosity=2).run(suite)
-+    report = {"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
-+              "skipped": len(result.skipped), "success": result.wasSuccessful(),
-+              "scope": "isolated Windows x64 package; Chinese/space installation path; no helper GUI integration"}
-+    OPTIONS.report.parent.mkdir(parents=True, exist_ok=True)
-+    OPTIONS.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-+    raise SystemExit(0 if result.wasSuccessful() else 1)
-+
-+
-+if __name__ == "__main__":
-+    main()
-diff --git a/scripts/export_pd_component_patch.py b/scripts/export_pd_component_patch.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..670522bd4e883efe9e715cf2556f7337362c87a5
---- /dev/null
-+++ b/scripts/export_pd_component_patch.py
-@@ -0,0 +1,51 @@
-+"""Export only the component implementation layer, leaving eye/other user edits out."""
-+import argparse
-+import difflib
-+import hashlib
-+import json
-+import subprocess
-+from pathlib import Path
-+
-+ROOT = Path(__file__).resolve().parents[1]
-+TRACKED = ["src/lib/pdChatBridge.ts", "src/lib/pdChatBridge.test.ts", "src/lib/tauriApi.ts", ".gitignore", "package.json", "package-lock.json",
-+           "src-tauri/tauri.conf.json", "src-tauri/src/tray.rs",
-+           "src/main.tsx", "src/windows/SettingsWindow.tsx", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
-+           "src-tauri/src/lib.rs", "src-tauri/src/config_cmd.rs",
-+           "src-tauri/src/secrets_cmd.rs", "src-tauri/src/pd_bridge_cmd.rs"]
-+ADDED = ["src/lib/brand.ts", "docs/upstream-sync/PALDEE_SYNC.md",
-+         "docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md", "docs/PALDEE_PET_STARTUP_ACCEPTANCE.md", "docs/PALDEE_PET_FULL_CLI.md", "src-tauri/src/component_runtime.rs", "scripts/build_pd_component.ps1",
-+         "scripts/package_pd_component.py", "scripts/test_pd_component.py",
-+         "scripts/export_pd_component_patch.py", "docs/OCTOPPET_COMPONENT.md", "docs/OCTOPPET_COMPONENT_ACCEPTANCE.md"]
-+
-+def git(*args, data=None):
-+    return subprocess.check_output(["git", "-c", "core.safecrlf=false", *args],
-+                                   cwd=ROOT, input=data, stderr=subprocess.DEVNULL)
-+
-+def main():
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--base", default="53b675d")
-+    parser.add_argument("--output", type=Path, default=ROOT / "docs/upstream-sync/snapshots")
-+    args = parser.parse_args()
-+    base = git("rev-parse", args.base).decode().strip()
-+    files = TRACKED + ADDED + sorted(p.relative_to(ROOT).as_posix()
-+                                    for p in (ROOT / "packaging/third-party-licenses").rglob("*") if p.is_file())
-+    tracked = [p for p in files if git("ls-files", "--", p).strip()]
-+    patch = git("diff", "--binary", "--full-index", base, "--", *tracked).decode("utf-8")
-+    for name in [p for p in files if p not in tracked]:
-+        content = (ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n")
-+        blob = git("hash-object", "--stdin", data=content.encode()).decode().strip()
-+        patch += f"diff --git a/{name} b/{name}\nnew file mode 100644\nindex {'0'*40}..{blob}\n"
-+        patch += "".join(difflib.unified_diff([], content.splitlines(True), fromfile="/dev/null", tofile="b/" + name))
-+    args.output.mkdir(parents=True, exist_ok=True)
-+    target = args.output / "octoppet-component.patch"
-+    target.write_text(patch, encoding="utf-8", newline="\n")
-+    manifest = {"baseline": base, "head": git("rev-parse", "HEAD").decode().strip(),
-+                "patchSha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-+                "files": {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in files},
-+                "scope": "Component and Paldee branding source layer; unrelated eye changes remain separate"}
-+    (args.output / "octoppet-component.json").write_text(
-+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-+    print("Exported component source patch; index and branch unchanged")
-+
-+if __name__ == "__main__":
-+    main()
 diff --git a/docs/OCTOPPET_COMPONENT.md b/docs/OCTOPPET_COMPONENT.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..18e07a1da20b6ec383ef2f44f4eec30d606f4a38
@@ -2339,6 +172,231 @@ index 0000000000000000000000000000000000000000..e4d1b4328b1bc78ec4ce60805e551e61
 +- Windows 命名管道权限：[Microsoft](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)。
 +- 子进程句柄继承：[Microsoft](https://learn.microsoft.com/en-us/windows/win32/procthread/inheritance)。
 +- 第三方源及下载指纹在 packaging/third-party-licenses/SOURCES.json，ZIP 内保留完整许可文本与源码下载地址。
+diff --git a/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..83f4b9a0032ffa35e512b213918679a69b73df5c
+--- /dev/null
++++ b/docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md
+@@ -0,0 +1,36 @@
++# Paldee Pet 0.2.1 组件验收
++
++记录日期：2026-10-08。本报告对应本地品牌版，不表示已签名、上传或发布。
++
++## 命名与兼容
++
++显示名 Paldee Pet；ZIP 为 paldee-pet-0.2.1-windows-x64.zip；入口 paldee-pet.exe；服务器目录 /www/wwwroot/xiaozs/sah/components/paldee-pet/。
++内部组件 ID octoppet、协议 octoppet-component@1、聊天桥接 pd-chat-cli@2、用户数据及 keyring 标识不变。只支持 Windows x64。
++
++## 修改文件
++
++- scripts/package_pd_component.py：新入口、ZIP 名、输出目录和 HTTPS 下载地址及目录校验。
++- scripts/test_pd_component.py：按新入口验收，仍验证元数据、架构、中文空格路径、并发和重复启动、正常停止、异常退出、超时、协议不兼容和独立数据保留。
++- package.json、package-lock.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、Cargo.lock：根包版本 0.2.1，依赖版本不变。
++- src-tauri/src/component_runtime.rs：实际验收发现同时启动时可能提前关闭管道；仅 start/status 对 EOF/断管做有总超时约束的重试，不重试其他操作；竞争实例退出码 0 时继续查询既有实例，不误报启动失败。start 请求使用同作用域 Windows 命名互斥锁，等待计入总超时，异常退出由系统释放；并发冷启动验收连续执行五轮。
++- scripts/export_pd_component_patch.py：补丁纳入品牌接线与版本文件；不操作索引、分支或远端。
++- CHANGELOG.md、组件规范说明、同步流程及历史验收提示：更新发布路径和新旧包边界。
++
++品牌来源仍为 Tauri productName；设置页、页面标题、托盘和清单共用它。原始 Cargo 产物名保留，复制进 ZIP 时改名，不给上游增加包名修改。
++
++## 发布和联调边界
++
++latest-windows-x64.json 是未签名清单，签名前留存 unsigned 副本；不得直接用于线上安装。不读取产品私钥，不生成全局 catalog.json，不覆盖 Cua 文件。目录维护者应更新原 octoppet ID 条目的清单地址，不能另造重复 ID。
++已有 0.2.0 包原样保留。更新须先按旧清单入口正常停止，再按新清单入口启动。小助手真实签名安装、更新、卸载和调用层联调仍未执行；远程 Octop 连接和屏幕操作没有在本轮重新测试。Windows 需要现有 WebView2；不宣称 x86 或 Mac 组件支持。
++
++运行报告见输出目录 runtime-acceptance.json；原生源码差异通过 Git 审查，同步步骤见 [维护流程](upstream-sync/PALDEE_SYNC.md)。
++
++## 最终产物与验证结果
++
++Windows 等价 make all 通过：前端 130 项、Rust 27 项；最终启动互斥修改后 clippy -D warnings 与 Rust 27 项复测通过。生产构建通过；真实解压包 11 项验收全部通过（41.180 秒），包括五轮并发冷启动、中文空格路径、重复启动、显隐、正常停止、异常恢复、超时、协议拒绝及整个组件目录卸载后独立用户数据保留。
++
++- `D:\ai\OctopPet\build\component-release\paldee-pet\0.2.1\paldee-pet-0.2.1-windows-x64.zip`：15378458 字节；SHA-256 `83a5c4a2f2cb3cdc35d609997af2ed4be8d4cdff69137de027dc27bdf84ceb85`。
++- `D:\ai\OctopPet\build\component-release\paldee-pet\latest-windows-x64.json`：435 字节；SHA-256 `e372de98e19e24252e4ba7642ffd0a76194285ae2d0708c035a5718c85fa3ce8`。
++- `D:\ai\OctopPet\build\component-release\paldee-pet\catalog-entry.json`：508 字节；SHA-256 `06ea920b22f9f4bd38ff326ca920a4709df3c9f66c691c2e2ad4fce2b992a6d6`。
++
++ZIP 包含实际 x64 入口、component.json、LICENSE 与桥接及运行许可文件；元数据 ID/版本/架构/入口一致，解压和 CRC 校验通过，size/sha256 来自最终 ZIP。latest 清单与 unsigned 副本完全一致。未提交、推送、签名或上传。
+diff --git a/docs/PALDEE_PET_FULL_CLI.md b/docs/PALDEE_PET_FULL_CLI.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..69142e722d5951ee2a3d7abf4a4a01e3ff1a09c6
+--- /dev/null
++++ b/docs/PALDEE_PET_FULL_CLI.md
+@@ -0,0 +1,25 @@
++# Paldee Pet 0.2.3 完整 CLI 桥接
++
++2026-10-09。本轮取消服务器、Pet 前端、Tauri 和独立桥接的命令类别白名单；保留固定小助手入口、参数类型/长度、聊天会话匹配及资源限制。未来 CLI 子命令自动透传。真实错误由本机 CLI 返回，不替换为“超出桥接支持范围”。
++
++新增可选标准输入及文件包，仍用原 pd-chat-cli@2 / WS/WSS；有 IO 的方法为 helper.cli.io，避免旧客户端静默丢失输入。没有改 Octop ws.py 格式、服务地址、端口、Agent 或 Skill 格式。包格式仍遵循原外部组件规范，ID octoppet、入口 paldee-pet.exe、协议 octoppet-component@1 不变。
++
++修正旧连接八次已完成调用后静默拒绝：最多八个并行操作，完成结果保留 128 项去重缓存。顺序连续操作不受八次限制。
++
++Pet 修改：src/lib/pdChatBridge.ts、pdChatBridge.test.ts、tauriApi.ts、src-tauri/src/pd_bridge_cmd.rs、根版本/锁文件、文档与源码补丁。独立桥接修改：native/src/lib.rs、main.rs、新增 transfer.rs；server/pd_chat_bridge.py、pd_cli_proxy.py及测试、README、升级说明和独立服务器包脚本。桥接源码留在 D:/ai/screen-automation-device-bridge，不复制入小助手或 Pet 运行源码。
++
++流程安装/检查时服务器目录自动上传；既有本机流程用 workflow show 获得目录，再 --pd-download 取回源码。输入 *-file 参数自动传文件，其他输入用 --pd-upload INDEX=PATH；标准输入 UTF-8 透传。单次文本最多 1 MiB、文件最多 128 个/4 MiB；成功副本保存在独立用户目录 bridge-transfers，供异步操作继续使用，卸载组件保留。
++
++具体用法见独立桥接 FULL_CLI_USAGE.md；服务器更新见 SERVER_UPGRADE.md。上传后使用 /home/admin/.octop/venv/bin/python update_bridge.py 预览，停止原服务后加 --apply 更新，再按原方式启动并重新聊天。仅更新已有模块，不重打 Octop 补丁。两个端点都需本轮版本；未上传前不能声称远端已经完整支持。
++
++签名在本地受控产品目录使用原密钥；本仓库继续生成未签名版本清单及自身目录条目，不生成全局 catalog.json，不改 Cua 或产品签名私钥。旧版本 ZIP 保留。小助手启动设置及眼睛动画保留。
++
++## 最终验证与交付
++
++Windows `scripts/check-windows.ps1` 全绿：前端 140 项、Pet Rust 27 项；独立桥接 Rust 6 项、服务器与真实 CLI 18 项、最终 ZIP 生命周期验收 12 项通过。真实 CLI 验证包含流程 schema/inspect/install/show/validate、流程源码取回和中文标准输入写入/读取。ZIP 验证包含中文及空格路径、重复启动、正常停止、异常退出、独立用户数据保留。
++
++最终 Windows ZIP：15,426,748 字节，SHA-256 `5a8f39c78465c4660634db40217e07d0be3e7bfd5a7aa0f52a9b40b82be9781c`。
++
++服务器更新 ZIP：12,155 字节，SHA-256 `a78a94c0fe367be13992d79132a3c3368c1ed227d3d4cf805d13078ccfd6d9ff`。
++
++本地网站待上传文件在 `D:/ai/xiaozs.com/xiaozs/sah/components`，签名与哈希报告在 `D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.3/signing-verification.json`。已验证产品签名并保留 Cua 原条目；未上传、未 push。服务器安装和真实宠物到远端 Octop 的联调仍待手动部署；现有已安装的旧 Pet 不会因本地构建自动升级。
+diff --git a/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f3856facbc064991e775ca7e39f88928ee633a7
+--- /dev/null
++++ b/docs/PALDEE_PET_STARTUP_ACCEPTANCE.md
+@@ -0,0 +1,28 @@
++# Paldee Pet 0.2.2 打开与联动启动验收
++
++2026-10-08。本轮保留 0.2.1 包及先前记录；新版本才增加打开和可选联动启动声明。
++
++设置名称：随“屏幕自动化小助手”启动。默认关闭，保存后下次启动主程序生效。仅小助手主程序启动时联动，不修改 PATH、Windows 自启动或开机任务。关闭主程序不关闭独立桌宠。不开启时不启动或下载任何组件。
++
++Pet 修改：scripts/package_pd_component.py、scripts/test_pd_component.py、根版本文件、CHANGELOG、组件及同步文档。内部标识和独立用户数据不变。
++小助手独立仓库修改前基线：43913008；记录时当前提交 ad49a8ee 已包含这四个文件的相同改动（本会话未执行 commit 或 push），不可重复应用补丁；修改 components/manager.py（传递协议）、components/operations.py（固定 JSON 生命周期调用及可选启动）、gui/main_window.py（异步打开和一次性启动钩子）、tests/test_component_application_startup.py（回归）。没有复制源码入 Pet 或复制 Pet 源码入小助手。
++
++手动“打开”执行 start/show；联动启动只执行 start。失败不会阻塞主窗口，也不会妨碍其他已开启的组件。打开使用已安装清单入口，核对 JSON 协议/版本/ID、退出码、运行状态和 PID，不运行任意 shell。
++
++小助手相关测试：30 项组件测试通过；37 项可选组件/外部目录测试完成，35 通过、2 跳过。本轮新增的 11 项启动和设置回归包含默认关闭、损坏偏好、版本/协议错误、超时、失败隔离及独立配置持久化。
++
++签名和文件准备仍在本地产品发布目录进行。没有服务器上传、源码提交、push 或主程序安装包发布。旧主程序必须更新调用层；源码小助手重启才能加载变化。远程 Octop 和业务屏幕操作不是本轮验收目标。
++
++真实界面联调发现启动/状态并发时旧管道实例可能尚被客户端持有，限制为 2 会导致创建下一监听失败并退出。运行协议改用系统默认管道实例上限，仍只保留一个待连接监听；新增十轮 start/status/status 并发验收，首实例所有权和当前用户 ACL 不变。
++
++## 最终结果与产物
++
++Windows 等价 make all 通过（前端 130、Rust 27）；并发修复后 Rust clippy 与 27 项测试复测通过。实际 ZIP 的 12 项验收全部通过（43.277 秒），包含五轮并发冷启动和十轮 start/status/status 并发。真实 Tk 组件页与实际签名安装共 10 项联调通过，实际点击“打开”和“保存配置”，验证默认关闭、保存、主程序启动钩子、隐藏窗口保持、关闭偏好及卸载保留数据。
++
++本机组件通过现有签名安装器升级为 0.2.2，用户启动偏好没有修改。源码小助手需重启加载调用层。两份 JSON 已受信任验签，Cua 保留；网站本地目录已准备，服务器未上传。
++
++- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\0.2.2\paldee-pet-0.2.2-windows-x64.zip`：15379080 字节；SHA-256 `53b1af11664c6ac609afc580f01f1ab1b5dbc761dcbe889d6d5ffa273c4643db`。
++- `D:\ai\xiaozs.com\xiaozs\sah\components\paldee-pet\latest-windows-x64.json`：635 字节；SHA-256 `bee8b094933577a4d76373f0934243e4473fbe709f5e7b6bad475d626a9cfa61`。
++- `D:\ai\xiaozs.com\xiaozs\sah\components\catalog.json`：2067 字节；SHA-256 `043d62387dfee3c51e0334ef921b3fadea134e6212535c74e07e9ef0fb66170e`。
++
++旧 0.2.1 ZIP 和已验收记录保留。失败的未发布 0.2.2 候选包和对应签名清单仅归档到缓存/暂存备份，不能上传。当前最终签名和联调报告位于 D:/ai/xiaozs.com/component-release-staging/paldee-pet-0.2.2/。Pet 构建目录中的 latest 仍是 unsigned 构建产物；上传应使用网站对应本地目录中的已签名文件。
+diff --git a/docs/upstream-sync/PALDEE_SYNC.md b/docs/upstream-sync/PALDEE_SYNC.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0fc2782de2e4fadbbd084b8b3ba55e089f895e59
+--- /dev/null
++++ b/docs/upstream-sync/PALDEE_SYNC.md
+@@ -0,0 +1,77 @@
++# Paldee Pet 品牌与上游同步流程
++
++记录日期：2026-10-08。本仓库继续独立维护，不向小助手仓库复制源码。
++
++## 修改边界
++
++品牌名称的唯一来源是 `src-tauri/tauri.conf.json` 的 `productName`。
++`src/lib/brand.ts` 提供前端名称，设置页和页面标题读取它；托盘读取 Tauri 配置；组件打包器同样读取该字段。
++聊天原生窗口标题在同一配置中显式设置为 Paldee Pet；修改品牌时同时核对它。宠物窗口空标题保留，避免 Windows 残留标题条。
++
++保留 `com.octop.pet` 应用/凭据标识、`octoppet` 组件 ID、`octoppet-component@1` 和 `pd-chat-cli@2` 协议；独立用户数据路径保持不变。不要把远程 Octop 服务名称全部替换成 Paldee。图标本次保留；以后品牌资源放在独立目录，按打包配置接入。原作者版权、LICENSE 和上游来源不得删除。
++
++| 扩展         | 独立文件                                     | 合并时检查的已有文件                                             |
++| ------------ | -------------------------------------------- | ---------------------------------------------------------------- |
++| 品牌         | src/lib/brand.ts、本说明                     | tauri.conf.json、main.tsx、SettingsWindow.tsx、tray.rs、打包脚本 |
++| 聊天桥接     | pdChatBridge.ts、pd_bridge_cmd.rs            | useChatController.ts、tauriApi.ts、lib.rs                        |
++| 可选组件     | component_runtime.rs、scripts/_pd_component_ | Cargo.toml/lock、lib.rs、config_cmd.rs、secrets_cmd.rs           |
++| 太极眼睛动画 | mascot.css、MascotImage.test.tsx             | MascotImage.tsx                                                  |
++
++## 第一次同步前
++
++当前 origin 是自有仓库 https://github.com/xiaozs-com/OctopPet.git。尚未配置 upstream，且为浅克隆。先从原项目页面确认 **OctopPet 原仓库 URL 和默认分支**；不要把 Octop 服务端仓库或 origin 当作 Pet 上游。本次没有新增远端、联网拉取、合并或提交。
++
++以下命令在仓库目录的 PowerShell 执行；尖括号是待填内容，不能直接照抄执行。
++
++```powershell
++git status --short
++git remote -v
++git rev-parse --is-shallow-repository
++git remote add upstream <确认的-OctopPet-仓库URL>
++git fetch upstream
++```
++
++已经有 upstream 时先核对地址，不重复添加。若浅历史无法找到共同祖先，补充对应远端历史，必要时使用 `git fetch --unshallow origin` 并重新 fetch upstream；确认 `git merge-base HEAD upstream/<默认分支>` 能返回共同祖先。失败时先查清仓库来源，禁止用 `--allow-unrelated-histories` 强行合并。
++
++## 每次同步
++
++1. 先备份整个当前工作目录中的源文件和未跟踪文件，用户数据另外备份。`git diff` 不包含未跟踪文件，不能单独当完整备份。查看 `git status --short`；有未提交工作时先由维护者审查并提交，或明确保存后再继续。不要直接 reset、clean 或覆盖文件。本次工作仍未提交。
++2. 在干净工作区记录当前提交并建立恢复分支，再在同步分支操作：
++
++```powershell
++git rev-parse HEAD
++git branch backup/paldee-before-sync-<日期>
++git switch -c codex/sync-octoppet-<日期>
++git fetch upstream
++git log --oneline HEAD..upstream/<默认分支>
++git diff HEAD...upstream/<默认分支> -- src src-tauri package.json package-lock.json
++git merge --no-commit --no-ff upstream/<默认分支>
++```
++
++3. 冲突按上表逐项迁移少量接线，独立模块保留；不要整文件选择 ours/theirs。特别检查聊天创建/接收/发送连接、Tauri 命令注册、用户数据和 keyring。不要恢复桥接授权弹窗、增加公网端口或要求 SSH。保留新上游的安全修复与正常聊天行为。
++4. 检查未解决冲突，运行 Windows 等价 `make all`：
++
++```powershell
++git diff --name-only --diff-filter=U
++powershell -ExecutionPolicy Bypass -File scripts/check-windows.ps1
++git diff --check
++```
++
++5. 验证设置页名称、托盘提示、聊天、太极仅眼睛动画；按 `docs/OCTOPPET_COMPONENT.md` 构建并运行组件验收。用户数据、重复启动、停止、异常退出、中文空格路径都必须通过。Mac 手工测试需另行执行，Windows 通过不代表 Mac 通过。
++6. 更新 CHANGELOG、同步日期/上游提交/冲突位置/测试结果，审查后由维护者提交。合并回维护分支、push 和发布是单独步骤；源码同步不等于发布安装包。
++
++合并期间要放弃时用 `git merge --abort`，返回原维护分支；恢复分支留存。已结束合并后不要对有工作改动的目录执行 reset；先保存工作，再从恢复分支创建新的工作分支。
++
++## 补丁、构建产物与发布
++
++日常以 Git 合并为主，`docs/upstream-sync/snapshots/` 是应急参考。旧快照的 baseline/head 仅代表生成时点，不能盲目覆盖新上游。品牌接线涉及的文件已列在上表；最新组件补丁导出器已纳入品牌接线及版本文件。快照必须在最终修改后重新生成，不能把旧快照当作当前完整源码。组件补丁使用 `python scripts/export_pd_component_patch.py --base <明确的基线提交>` 重新生成；它不涵盖所有历史桥接和太极改动。
++
++已有 0.2.0 ZIP 是本次更名前的已验收包，不能宣称它已经显示 Paldee Pet。当前品牌版使用 0.2.2，以后构建应使用新版本，并同步 package.json、tauri.conf.json、Cargo.toml 和 Cargo.lock 根包版本，再重新计算最终 ZIP 的 size/sha256、生成未签名清单、验收和受控签名。不得覆盖已发布版本，不能沿用旧哈希/签名。对外包从 0.2.1 起改为 `paldee-pet-<version>-windows-x64.zip`，入口为 `paldee-pet.exe`，发布目录为 `/sah/components/paldee-pet/`。打包器在复制时改名，不修改 Cargo 包名。小助手更新须先按旧清单入口停止旧版本，再按新清单入口启动，不硬编码旧入口。内部 ID 不变，目录维护者应替换同 ID 的条目，避免重复。未上传，不修改全局 catalog.json 或 Cua 文件。
++
++0.2.2 增加 launchable 与默认关闭的 start_with_helper 声明；小助手调用层补丁独立保存为 snapshots/helper-pet-startup.patch。同步主程序后检查组件页异步打开、主窗口一次性启动钩子、读取已保存开关及错误提示，不向 Pet 仓库复制小助手源码。
++
++0.2.3 全 CLI 接线涉及 pdChatBridge.ts / tauriApi.ts / pd_bridge_cmd.rs；参数范围只限制固定 helper CLI 根，不列举子命令。独立桥接传输细节及服务端模块更新留在桥接仓库；服务端不修改 Octop API，已有 ws.py 补丁升级兼容性仍要检查。完整记录见 ../PALDEE_PET_FULL_CLI.md。
++
++2026-10-09 目录精简：打包器不再在 catalog-entry.json 输出 version/entry，验证改为 ZIP component.json 与 latest 清单版本及入口一致；目录只核对稳定 ID 和平台。Pet 与 Cua 分类统一为“交互增强”；Cua 的 packaging/windows/create_release_metadata.ps1 同步修改分类。本地网站全局目录重新签署，保留其他字段和条目。普通版本更新无需重生成目录；只有目录身份、分类或清单地址变化才合并并签名。已有 ZIP、latest 清单及 Cua 发布文件不改。
++
++2026-10-10 项目包名改为 paldee-pet，Rust 库名 paldee_pet_lib，原生构建入口 paldee-pet.exe；同步上游后检查 package/lock、Cargo/lock、main.rs、command_logic.rs 与 build_pd_component.ps1 的名字接线。上游 OctopPet 版权来源、内部 octoppet 组件 ID、com.octop.pet 用户数据及协议标识保留。历史补丁与已发布 ZIP 不重写。
+diff --git a/package-lock.json b/package-lock.json
+index 0e1ef1b9b6a594fbbfa55c0dc4d5fdb13ef5467f..03c8cc33c788a786d88c9f0cbc5c1797ac1a09e5 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+-  "name": "octop-pet",
+-  "version": "0.2.0",
++  "name": "paldee-pet",
++  "version": "0.2.3",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+-      "name": "octop-pet",
+-      "version": "0.2.0",
++      "name": "paldee-pet",
++      "version": "0.2.3",
+       "dependencies": {
+         "@tauri-apps/api": "^2",
+         "@tauri-apps/plugin-http": "^2.5.9",
+diff --git a/package.json b/package.json
+index 10f7eacb28e246ef3c71221d3b79e451572ca7da..23fbb0b18ac1342895b7de9744f942ef2da1a78e 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+-  "name": "octop-pet",
++  "name": "paldee-pet",
+   "private": true,
+-  "version": "0.2.0",
++  "version": "0.2.3",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
 diff --git a/packaging/third-party-licenses/SOURCES.json b/packaging/third-party-licenses/SOURCES.json
 new file mode 100644
 index 0000000000000000000000000000000000000000..3f710d89372a255e81cbd9cd2efbe636f36bddbe
@@ -3296,3 +1354,2056 @@ index 0000000000000000000000000000000000000000..de9a7e660e173136b351982a34f715af
 +LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
+diff --git a/scripts/build_pd_component.ps1 b/scripts/build_pd_component.ps1
+new file mode 100644
+index 0000000000000000000000000000000000000000..38ff9bde81654081f739e1f90b8b5d15fd75ccf8
+--- /dev/null
++++ b/scripts/build_pd_component.ps1
+@@ -0,0 +1,28 @@
++# Local Windows x64 component build. No installation, keys, catalog merge or upload.
++param(
++    [Parameter(Mandatory=$true)][string]$BridgeRoot,
++    [string]$OutputDirectory = ""
++)
++$ErrorActionPreference = 'Stop'
++Set-Location (Split-Path -Parent $PSScriptRoot)
++function Invoke-Checked([string]$Program, [string[]]$Arguments) {
++    & $Program @Arguments
++    if ($LASTEXITCODE -ne 0) { throw "$Program failed: $LASTEXITCODE" }
++}
++if (-not [Environment]::Is64BitOperatingSystem) { throw 'Windows x64 is required' }
++Invoke-Checked npm.cmd @('run', 'tauri', '--', 'build', '--no-bundle', '--target', 'x86_64-pc-windows-msvc')
++$componentRustFlags = $env:RUSTFLAGS
++try {
++    $env:RUSTFLAGS = (($componentRustFlags + ' -C target-feature=+crt-static').Trim())
++    Invoke-Checked cargo @('build', '--release', '--offline', '--locked', '--target', 'x86_64-pc-windows-msvc', '--manifest-path', (Join-Path $BridgeRoot 'native/Cargo.toml'))
++} finally {
++    $env:RUSTFLAGS = $componentRustFlags
++}
++$packageArguments = @(
++    'scripts/package_pd_component.py',
++    '--pet', 'src-tauri/target/x86_64-pc-windows-msvc/release/paldee-pet.exe',
++    '--bridge', (Join-Path $BridgeRoot 'native/target/x86_64-pc-windows-msvc/release/pd-device-bridge.exe'),
++    '--bridge-root', $BridgeRoot
++)
++if ($OutputDirectory) { $packageArguments += @('--output', $OutputDirectory) }
++Invoke-Checked python $packageArguments
+diff --git a/scripts/export_pd_component_patch.py b/scripts/export_pd_component_patch.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..115165c5ce9549910b9cf61ade8e27c7d19fb4f2
+--- /dev/null
++++ b/scripts/export_pd_component_patch.py
+@@ -0,0 +1,51 @@
++"""Export only the component implementation layer, leaving eye/other user edits out."""
++import argparse
++import difflib
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++TRACKED = ["src/lib/pdChatBridge.ts", "src/lib/pdChatBridge.test.ts", "src/lib/tauriApi.ts", ".gitignore", "package.json", "package-lock.json",
++           "src-tauri/tauri.conf.json", "src-tauri/src/tray.rs",
++           "src/main.tsx", "src/windows/SettingsWindow.tsx", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
++           "src-tauri/src/lib.rs", "src-tauri/src/main.rs", "src-tauri/tests/command_logic.rs", "src-tauri/src/config_cmd.rs",
++           "src-tauri/src/secrets_cmd.rs", "src-tauri/src/pd_bridge_cmd.rs"]
++ADDED = ["src/lib/brand.ts", "docs/upstream-sync/PALDEE_SYNC.md",
++         "docs/PALDEE_PET_COMPONENT_ACCEPTANCE.md", "docs/PALDEE_PET_STARTUP_ACCEPTANCE.md", "docs/PALDEE_PET_FULL_CLI.md", "src-tauri/src/component_runtime.rs", "scripts/build_pd_component.ps1",
++         "scripts/package_pd_component.py", "scripts/test_pd_component.py",
++         "scripts/export_pd_component_patch.py", "docs/OCTOPPET_COMPONENT.md", "docs/OCTOPPET_COMPONENT_ACCEPTANCE.md"]
++
++def git(*args, data=None):
++    return subprocess.check_output(["git", "-c", "core.safecrlf=false", *args],
++                                   cwd=ROOT, input=data, stderr=subprocess.DEVNULL)
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--base", default="53b675d")
++    parser.add_argument("--output", type=Path, default=ROOT / "docs/upstream-sync/snapshots")
++    args = parser.parse_args()
++    base = git("rev-parse", args.base).decode().strip()
++    files = TRACKED + ADDED + sorted(p.relative_to(ROOT).as_posix()
++                                    for p in (ROOT / "packaging/third-party-licenses").rglob("*") if p.is_file())
++    tracked = [p for p in files if git("ls-files", "--", p).strip()]
++    patch = git("diff", "--binary", "--full-index", base, "--", *tracked).decode("utf-8")
++    for name in [p for p in files if p not in tracked]:
++        content = (ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n")
++        blob = git("hash-object", "--stdin", data=content.encode()).decode().strip()
++        patch += f"diff --git a/{name} b/{name}\nnew file mode 100644\nindex {'0'*40}..{blob}\n"
++        patch += "".join(difflib.unified_diff([], content.splitlines(True), fromfile="/dev/null", tofile="b/" + name))
++    args.output.mkdir(parents=True, exist_ok=True)
++    target = args.output / "octoppet-component.patch"
++    target.write_text(patch, encoding="utf-8", newline="\n")
++    manifest = {"baseline": base, "head": git("rev-parse", "HEAD").decode().strip(),
++                "patchSha256": hashlib.sha256(target.read_bytes()).hexdigest(),
++                "files": {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in files},
++                "scope": "Component and Paldee branding source layer; unrelated eye changes remain separate"}
++    (args.output / "octoppet-component.json").write_text(
++        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++    print("Exported component source patch; index and branch unchanged")
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/package_pd_component.py b/scripts/package_pd_component.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d0c883fa8fdd639f13ac00b49a6fc172b6395e4
+--- /dev/null
++++ b/scripts/package_pd_component.py
+@@ -0,0 +1,226 @@
++"""Package Paldee Pet with UNSIGNED manifests. No private keys, global catalogs or uploads."""
++from __future__ import annotations
++import argparse
++import hashlib
++import json
++import os
++import re
++import shutil
++import struct
++import subprocess
++import tempfile
++import zipfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++ID = "octoppet"
++PLATFORM = "windows-x64"
++ENTRY = "paldee-pet.exe"
++PROTOCOL = "octoppet-component@1"
++
++def write_json(path, value):
++    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++
++def pe_machine(path):
++    with path.open("rb") as file:
++        header = file.read(64)
++        if len(header) != 64 or header[:2] != b"MZ":
++            raise ValueError(f"Not a PE executable: {path}")
++        file.seek(struct.unpack_from("<I", header, 60)[0])
++        pe = file.read(6)
++        if len(pe) != 6 or pe[:4] != b"PE\0\0":
++            raise ValueError(f"Invalid PE signature: {path}")
++        return struct.unpack_from("<H", pe, 4)[0]
++
++def pe_imports(path):
++    data = path.read_bytes()
++    pe = struct.unpack_from("<I", data, 60)[0]
++    sections = struct.unpack_from("<H", data, pe + 6)[0]
++    optional = pe + 24
++    optional_size = struct.unpack_from("<H", data, pe + 20)[0]
++    imports_rva = struct.unpack_from("<I", data, optional + 120)[0]
++    def offset(rva):
++        for index in range(sections):
++            start = optional + optional_size + 40 * index
++            virtual_size, address, raw_size, raw = struct.unpack_from("<IIII", data, start + 8)
++            if address <= rva < address + max(virtual_size, raw_size):
++                return raw + rva - address
++        raise ValueError("Invalid PE import address")
++    position = offset(imports_rva)
++    names = []
++    while any(data[position:position + 20]):
++        start = offset(struct.unpack_from("<I", data, position + 12)[0])
++        names.append(data[start:data.index(b"\0", start)].decode("ascii").lower())
++        position += 20
++    system = {"kernel32.dll", "advapi32.dll", "oleaut32.dll", "bcryptprimitives.dll", "ntdll.dll",
++              "user32.dll", "shell32.dll", "comctl32.dll", "ole32.dll", "gdi32.dll", "dwmapi.dll",
++              "shlwapi.dll", "ws2_32.dll", "bcrypt.dll"}
++    if any(name not in system and not name.startswith("api-ms-win-") for name in names):
++        raise ValueError(f"Unbundled non-system DLL dependency: {path.name}: {names}")
++    return names
++
++def collect_licenses(destination, bridge_root):
++    records, missing, seen = [], [], set()
++    legal_root = ROOT / "packaging/third-party-licenses"
++    sources = json.loads((legal_root / "SOURCES.json").read_text(encoding="utf-8"))
++    def collect(name, version, root, license_id, extra=""):
++        files = sorted(p for p in root.iterdir() if p.is_file() and
++                       p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE")))
++        if extra and (root / extra).is_file() and (root / extra) not in files:
++            files.append(root / extra)
++        if not files:
++            key = name.removeprefix("rust-") + "-" + version
++            if name.startswith("rust-unic-") and version == "0.9.0":
++                key = "unic-0.9.0"
++            if name in ["rust-webview2-com", "rust-webview2-com-sys"] and version == "0.38.2":
++                key = "webview2-0.38.2"
++            if name == "rust-webview2-com-macros" and version == "0.8.1":
++                key = "webview2-macros-0.8.1"
++            for record in sources.get(key, []):
++                path = legal_root / record["file"]
++                if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
++                    raise ValueError(f"Pinned license fingerprint mismatch: {path}")
++                files.append(path)
++        if not files:
++            missing.append(f"{name}@{version}: {license_id}")
++            return
++        target = destination / re.sub(r"[^a-zA-Z0-9._-]", "_", f"{name}-{version}")
++        target.mkdir(parents=True, exist_ok=True)
++        for file in files:
++            shutil.copy2(file, target / file.name)
++        source = (f"https://crates.io/api/v1/crates/{name.removeprefix('rust-')}/{version}/download"
++                  if name.startswith("rust-") else f"https://www.npmjs.com/package/{name.removeprefix('npm-')}/v/{version}")
++        records.append({"name": name, "version": version, "license": license_id, "source": source})
++    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
++    for name, info in lock["packages"].items():
++        if not name or info.get("dev"):
++            continue
++        root = ROOT / name
++        package = json.loads((root / "package.json").read_text(encoding="utf-8"))
++        collect("npm-" + package["name"], package["version"], root, str(package.get("license", "")))
++    for manifest in [ROOT / "src-tauri/Cargo.toml", bridge_root / "native/Cargo.toml"]:
++        metadata = json.loads(subprocess.check_output([
++            "cargo", "metadata", "--offline", "--locked", "--format-version", "1",
++            "--filter-platform", "x86_64-pc-windows-msvc", "--manifest-path", str(manifest),
++        ], text=True))
++        resolved = {node["id"] for node in metadata["resolve"]["nodes"]}
++        for package in metadata["packages"]:
++            if package["id"] not in resolved or package["source"] is None or package["id"] in seen:
++                continue
++            seen.add(package["id"])
++            collect("rust-" + package["name"], package["version"],
++                    Path(package["manifest_path"]).parent, package.get("license") or "",
++                    package.get("license_file") or "")
++    if missing:
++        raise ValueError("Missing dependency license texts:\n" + "\n".join(missing))
++    write_json(destination / "THIRD_PARTY_NOTICES.json", {"dependencies": records})
++    shutil.copy2(legal_root / "SOURCES.json", destination / "PINNED_LICENSE_SOURCES.json")
++
++def validate_archive(archive, manifest, catalog):
++    if archive.stat().st_size != manifest["size"]:
++        raise ValueError("ZIP byte size mismatch")
++    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
++    if digest != manifest["sha256"]:
++        raise ValueError("ZIP SHA-256 mismatch")
++    with zipfile.ZipFile(archive) as bundle:
++        if bundle.testzip() is not None:
++            raise ValueError("ZIP integrity failed")
++        for name in bundle.namelist():
++            if name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/") or ":" in name:
++                raise ValueError("Unsafe ZIP path")
++        metadata = json.loads(bundle.read("component.json"))
++        if not (metadata["id"] == manifest["id"] == catalog["id"] == ID and
++                metadata["version"] == manifest["version"] and
++                metadata["entry"] == manifest["entry"] == ENTRY and
++                metadata["supported_runtime_platforms"] == [manifest["platform"]] == [PLATFORM] and
++                list(catalog["manifests"]) == [PLATFORM] and metadata["protocol"] == PROTOCOL):
++            raise ValueError("Component metadata mismatch")
++        if "signature" in catalog or "components" in catalog:
++            raise ValueError("Only an unsigned single-component catalog entry is allowed")
++        if not {"LICENSE", ENTRY, "pd-device-bridge.exe"}.issubset(bundle.namelist()):
++            raise ValueError("Entry, bridge or license missing")
++        with tempfile.TemporaryDirectory(prefix="octoppet-zip-check-") as temporary:
++            bundle.extractall(temporary)
++            for name in [ENTRY, "pd-device-bridge.exe"]:
++                if pe_machine(Path(temporary) / name) != 0x8664:
++                    raise ValueError("Incorrect executable architecture")
++    return {"id": ID, "version": manifest["version"], "platform": PLATFORM,
++            "entry": ENTRY, "size": manifest["size"], "sha256": digest, "signature": "pending"}
++
++def package(args):
++    version = args.version
++    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
++        raise ValueError("Version must be x.y.z")
++    base = args.base_url.rstrip("/")
++    if not base.startswith("https://") or not base.endswith("/paldee-pet"):
++        raise ValueError("Base URL must be an HTTPS paldee-pet directory")
++    for path in [args.pet, args.bridge]:
++        if pe_machine(path) != 0x8664:
++            raise ValueError(f"Only Windows x64 is supported: {path}")
++        pe_imports(path)
++    if not (args.bridge_root / "LICENSE").is_file():
++        raise ValueError("Bridge license is required")
++    with tempfile.TemporaryDirectory(prefix="octoppet-version-check-") as temporary:
++        env = dict(os.environ, OCTOPPET_DATA_DIR=temporary)
++        result = subprocess.run([str(args.pet.resolve()), "status", "--json"],
++                                capture_output=True, text=True, encoding="utf-8", env=env, timeout=20, check=True)
++        status = json.loads(result.stdout)
++        if status.get("protocol") != PROTOCOL or status.get("version") != version:
++            raise ValueError("Executable version/protocol does not match")
++    output = args.output.resolve()
++    archive = output / version / f"paldee-pet-{version}-{PLATFORM}.zip"
++    if archive.exists():
++        raise FileExistsError("Immutable version already exists; use a new version or separate output")
++    archive.parent.mkdir(parents=True, exist_ok=True)
++    metadata = {"id": ID, "name": json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["productName"], "version": version,
++                "protocol": PROTOCOL, "capabilities": ["desktop.pet@1", "desktop.helper-cli@2"],
++                "supported_runtime_platforms": [PLATFORM], "entry": ENTRY, "launchable": True,
++                "settings": [{"key": "start_with_helper", "name": "随“屏幕自动化小助手”启动",
++                              "description": "默认关闭。保存后，下次启动屏幕自动化小助手时启动桌宠；不设置 Windows 系统自启动。",
++                              "value_type": "boolean", "default": False, "restart_required": False}],
++                "retains_user_data_on_uninstall": True}
++    with tempfile.TemporaryDirectory(prefix="octoppet-package-") as temporary:
++        staging = Path(temporary)
++        shutil.copy2(args.pet, staging / ENTRY)
++        shutil.copy2(args.bridge, staging / "pd-device-bridge.exe")
++        shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
++        write_json(staging / "component.json", metadata)
++        legal = staging / "licenses"
++        legal.mkdir()
++        shutil.copy2(args.bridge_root / "LICENSE", legal / "PD_BRIDGE_LICENSE.txt")
++        collect_licenses(legal, args.bridge_root)
++        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
++            for path in sorted(staging.rglob("*")):
++                if path.is_file():
++                    info = zipfile.ZipInfo(path.relative_to(staging).as_posix(), (2026, 1, 1, 0, 0, 0))
++                    bundle.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
++    manifest = {"id": ID, "version": version, "platform": PLATFORM,
++                "download_url": f"{base}/{version}/{archive.name}",
++                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "size": archive.stat().st_size,
++                "entry": ENTRY, "license": "MIT", "source": "https://github.com/xiaozs-com/paldee-pet",
++                "minimum_helper_version": "1.2.6"}
++    catalog = {"id": ID, "name": metadata["name"], "category": "交互增强",
++               "description": "独立桌面宠物，与远程 Octop 聊天并按需调用本机屏幕自动化小助手CLI。",
++               "supported_platforms": ["win32"], "manifests": {PLATFORM: f"{base}/latest-{PLATFORM}.json"},
++               "required_capabilities": [], "acquisition": "free", "retains_user_data_on_uninstall": True}
++    write_json(output / f"latest-{PLATFORM}.unsigned.json", manifest)
++    write_json(output / f"latest-{PLATFORM}.json", manifest)
++    write_json(output / "catalog-entry.json", catalog)
++    write_json(output / "package-validation.json", validate_archive(archive, manifest, catalog))
++    (output / "UNSIGNED_MANIFEST.txt").write_text(
++        "latest-windows-x64.json is UNSIGNED. Sign it in the controlled release environment before uploading.\n"
++        "No private keys or global catalog.json are read, generated, merged or uploaded by this repository.\n", encoding="utf-8")
++    return archive
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--version", default=json.loads((ROOT / "package.json").read_text())["version"])
++    parser.add_argument("--pet", type=Path, required=True)
++    parser.add_argument("--bridge", type=Path, required=True)
++    parser.add_argument("--bridge-root", type=Path, required=True)
++    parser.add_argument("--output", type=Path, default=ROOT / "build/component-release/paldee-pet")
++    parser.add_argument("--base-url", default="https://www.xiaozs.com/sah/components/paldee-pet")
++    print(package(parser.parse_args()))
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/test_pd_component.py b/scripts/test_pd_component.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..99b3c3cb69e6f042ebc3784f9c986bc1d2b5c326
+--- /dev/null
++++ b/scripts/test_pd_component.py
+@@ -0,0 +1,269 @@
++"""Windows acceptance against the real packaged executable, with isolated user data."""
++from __future__ import annotations
++import argparse
++import ctypes
++from concurrent.futures import ThreadPoolExecutor
++import importlib.util
++import json
++import os
++import shutil
++import struct
++import subprocess
++import tempfile
++import threading
++import time
++import unittest
++import zipfile
++from pathlib import Path
++
++spec = importlib.util.spec_from_file_location("packager", Path(__file__).with_name("package_pd_component.py"))
++packager = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(packager)
++OPTIONS = None
++
++
++def read_exact(file, count):
++    data = b""
++    while len(data) < count:
++        chunk = file.read(count - len(data))
++        if not chunk:
++            raise EOFError("pipe closed before the complete frame")
++        data += chunk
++    return data
++
++
++class ComponentAcceptance(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        if os.name != "nt":
++            raise unittest.SkipTest("Windows x64 runtime tests")
++        cls.temporary = tempfile.TemporaryDirectory(prefix="octoppet-acceptance-")
++        cls.root = Path(cls.temporary.name)
++        cls.installation = cls.root / "组件 安装测试" / "versions" / "test-version"
++        cls.user_data = cls.root / "独立 用户数据"
++        cls.user_data.mkdir()
++        cls.user_data.joinpath("retained.txt").write_text("retain-user-data", encoding="utf-8")
++        cls.user_data.joinpath("config.json").write_text(json.dumps({
++            "mascotId": "taiji-bot", "shortcutOpenPet": "", "shortcutOpenHome": "", "username": "",
++        }), encoding="utf-8")
++        cls.manifest = json.loads((OPTIONS.package_root / "latest-windows-x64.json").read_text(encoding="utf-8"))
++        cls.catalog = json.loads((OPTIONS.package_root / "catalog-entry.json").read_text(encoding="utf-8"))
++        cls.archive = OPTIONS.package_root / cls.manifest["version"] / f"paldee-pet-{cls.manifest['version']}-windows-x64.zip"
++        with zipfile.ZipFile(cls.archive) as bundle:
++            bundle.extractall(cls.installation)
++        cls.exe = cls.installation / "paldee-pet.exe"
++        cls.env = dict(os.environ, OCTOPPET_DATA_DIR=str(cls.user_data))
++
++    def invoke(self, command, expected=0, extra=(), env=None):
++        result = subprocess.run([str(self.exe), command, "--json", *extra], env=env or self.env,
++                                capture_output=True, text=True, encoding="utf-8", timeout=22)
++        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
++        value = json.loads(result.stdout)
++        self.assertEqual(value["protocol"], "octoppet-component@1")
++        self.assertEqual(value["id"], "octoppet")
++        self.assertEqual(value["version"], self.manifest["version"])
++        return value
++
++    def setUp(self):
++        self.invoke("stop")
++
++    def tearDown(self):
++        if self.exe.exists():
++            self.invoke("stop")
++
++    @classmethod
++    def tearDownClass(cls):
++        if cls.exe.exists():
++            subprocess.run([str(cls.exe), "stop", "--json"], env=cls.env, capture_output=True, timeout=22)
++        cls.temporary.cleanup()
++
++    def test_archive_metadata_architecture_and_allowlist(self):
++        result = packager.validate_archive(self.archive, self.manifest, self.catalog)
++        self.assertEqual(result["entry"], "paldee-pet.exe")
++        with zipfile.ZipFile(self.archive) as bundle:
++            metadata = json.loads(bundle.read("component.json"))
++            self.assertIs(metadata["launchable"], True)
++            self.assertEqual(metadata["settings"][0]["key"], "start_with_helper")
++            self.assertIs(metadata["settings"][0]["default"], False)
++        with zipfile.ZipFile(self.archive) as bundle:
++            for name in bundle.namelist():
++                self.assertTrue(name in ["component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe"] or
++                                name.startswith("licenses/"), name)
++
++    def test_chinese_space_path_and_repeat_launch(self):
++        first = self.invoke("start")
++        self.assertTrue(first["running"])
++        self.assertTrue(os.path.samefile(first["data_dir"], self.user_data))
++        self.assertEqual(self.invoke("start")["pid"], first["pid"])
++        # Test the ordinary double-click path as well as the JSON command.
++        repeated = subprocess.run([str(self.exe)], env=self.env, capture_output=True, timeout=22)
++        self.assertEqual(repeated.returncode, 0, repeated.stderr)
++        self.assertEqual(self.invoke("status")["pid"], first["pid"])
++        self.assertEqual({p.name for p in self.installation.iterdir()},
++                         {"component.json", "LICENSE", "paldee-pet.exe", "pd-device-bridge.exe", "licenses"})
++
++    def test_concurrent_start_has_one_owner(self):
++        # Repeat cold starts to cover both contenders winning the ownership race.
++        for attempt in range(5):
++            with self.subTest(attempt=attempt):
++                self.invoke("stop")
++                with ThreadPoolExecutor(max_workers=2) as pool:
++                    values = list(pool.map(lambda _: self.invoke("start"), range(2)))
++                self.assertEqual(values[0]["pid"], values[1]["pid"])
++                self.assertEqual(self.invoke("status")["pid"], values[0]["pid"])
++
++    def test_start_and_status_queries_do_not_end_the_host(self):
++        first = self.invoke("start")
++        for attempt in range(10):
++            with self.subTest(attempt=attempt), ThreadPoolExecutor(max_workers=3) as pool:
++                values = list(pool.map(lambda command: self.invoke(command), ["start", "status", "status"]))
++                self.assertTrue(all(value["running"] for value in values))
++                self.assertEqual({value["pid"] for value in values}, {first["pid"]})
++        self.assertEqual(self.invoke("status")["pid"], first["pid"])
++
++    def test_show_hide_and_normal_stop(self):
++        pid = self.invoke("start")["pid"]
++        self.assertFalse(self.invoke("hide")["visible"])
++        self.assertFalse(self.invoke("start")["visible"])
++        self.assertTrue(self.invoke("show")["visible"])
++        stopped = self.invoke("stop")
++        self.assertFalse(stopped["running"])
++        self.assertIsNone(stopped["pid"])
++        self.assertFalse(self.invoke("stop")["running"])
++        self.assertFalse(self.invoke("status")["running"])
++        self.assertIsInstance(pid, int)
++
++    def test_abnormal_exit_releases_ownership(self):
++        first = self.invoke("start")
++        # Only kill the process started in this test's private scope, after verifying its image.
++        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
++        kernel.OpenProcess.restype = ctypes.c_void_p
++        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
++        kernel.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
++        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
++        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
++        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
++        handle = kernel.OpenProcess(0x101001, 0, first["pid"])
++        self.assertTrue(handle)
++        try:
++            buffer = ctypes.create_unicode_buffer(32768)
++            length = ctypes.c_uint32(len(buffer))
++            self.assertTrue(kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(length)))
++            self.assertEqual(Path(buffer.value).resolve(), self.exe.resolve())
++            self.assertTrue(kernel.TerminateProcess(handle, 99))
++            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0)
++        finally:
++            kernel.CloseHandle(handle)
++        deadline = time.monotonic() + 8
++        while self.invoke("status")["running"] and time.monotonic() < deadline:
++            time.sleep(0.1)
++        self.assertFalse(self.invoke("status")["running"])
++        self.assertTrue(self.invoke("start")["running"])
++
++    def test_invalid_commands_and_not_running(self):
++        self.assertEqual(self.invoke("shell", expected=2)["error"]["code"], "INVALID_ARGUMENT")
++        self.assertEqual(self.invoke("show", expected=4)["error"]["code"], "NOT_RUNNING")
++        self.assertEqual(self.invoke("hide", expected=4)["error"]["code"], "NOT_RUNNING")
++        self.assertEqual(self.invoke("status", expected=2, extra=("--timeout-ms", "99999"))["error"]["code"], "INVALID_ARGUMENT")
++
++    def test_protocol_negotiation_refuses_wrong_version(self):
++        value = self.invoke("start")
++        with open(value["control_pipe"], "r+b", buffering=0) as file:
++            request = json.dumps({"protocol": "octoppet-component@99", "command": "hide"}).encode()
++            file.write(struct.pack("<I", len(request)) + request)
++            length = struct.unpack("<I", read_exact(file, 4))[0]
++            result = json.loads(read_exact(file, length))
++            file.write(b"\x01")
++        self.assertFalse(result["ok"])
++        self.assertEqual(result["error"]["code"], "UNSUPPORTED_PROTOCOL")
++        self.assertTrue(self.invoke("status")["visible"])
++
++    def test_timeout_is_bounded_and_structured(self):
++        name = self.invoke("status")["control_pipe"]
++        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
++        kernel.CreateNamedPipeW.restype = ctypes.c_void_p
++        kernel.CreateNamedPipeW.argtypes = [ctypes.c_wchar_p, *([ctypes.c_uint32] * 6), ctypes.c_void_p]
++        kernel.ConnectNamedPipe.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
++        kernel.DisconnectNamedPipe.argtypes = [ctypes.c_void_p]
++        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
++        handle = kernel.CreateNamedPipeW(name, 0x00080003, 8, 1, 8192, 8192, 1000, None)
++        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
++        def stalled_test_server():
++            try:
++                kernel.ConnectNamedPipe(handle, None)
++                time.sleep(1)
++                kernel.DisconnectNamedPipe(handle)
++            finally:
++                kernel.CloseHandle(handle)
++        thread = threading.Thread(target=stalled_test_server, daemon=True)
++        thread.start()
++        try:
++            start = time.monotonic()
++            value = self.invoke("status", expected=5, extra=("--timeout-ms", "200"))
++            self.assertEqual(value["error"]["code"], "TIMEOUT")
++            self.assertLess(time.monotonic() - start, 5)
++        finally:
++            thread.join(timeout=3)
++        self.assertFalse(thread.is_alive())
++
++    def test_user_directory_inside_component_is_rejected(self):
++        managed_root = self.installation.parent.parent
++        forbidden = [self.installation, managed_root, managed_root / "user-data",
++                     managed_root / "versions" / "0.1.0" / "user-data"]
++        for path in forbidden:
++            existed = path.exists()
++            value = self.invoke("status", expected=8, env=dict(self.env, OCTOPPET_DATA_DIR=str(path)))
++            self.assertEqual(value["error"]["code"], "IO_ERROR")
++            self.assertIn("outside the component", value["error"]["message"])
++            if not existed:
++                self.assertFalse(path.exists())
++
++    def test_bad_metadata_size_hash_and_x86_are_rejected(self):
++        for manifest in [dict(self.manifest, size=self.manifest["size"] + 1),
++                         dict(self.manifest, sha256="0" * 64)]:
++            with self.assertRaises(ValueError):
++                packager.validate_archive(self.archive, manifest, self.catalog)
++        with self.assertRaises(ValueError):
++            packager.validate_archive(self.archive, self.manifest, dict(self.catalog, id="other"))
++        path = self.root / "x86-fixture.exe"
++        data = bytearray(70)
++        data[:2] = b"MZ"
++        struct.pack_into("<I", data, 60, 64)
++        data[64:68] = b"PE\0\0"
++        struct.pack_into("<H", data, 68, 0x14C)
++        path.write_bytes(data)
++        self.assertEqual(packager.pe_machine(path), 0x14C)
++        with self.assertRaisesRegex(ValueError, "Only Windows x64"):
++            packager.package(argparse.Namespace(version=self.manifest["version"],
++                base_url="https://www.xiaozs.com/sah/components/paldee-pet", pet=path,
++                bridge=self.installation / "pd-device-bridge.exe"))
++
++    def test_zz_uninstall_preserves_independent_user_data(self):
++        self.invoke("start")
++        self.invoke("stop")
++        managed_root = self.installation.parent.parent
++        self.assertTrue(managed_root.resolve().is_relative_to(self.root.resolve()))
++        shutil.rmtree(managed_root)
++        self.assertFalse(managed_root.exists())
++        self.assertEqual(self.user_data.joinpath("retained.txt").read_text(encoding="utf-8"), "retain-user-data")
++        self.assertTrue(self.user_data.joinpath("config.json").is_file())
++
++
++def main():
++    global OPTIONS
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--package-root", type=Path, required=True)
++    parser.add_argument("--report", type=Path, required=True)
++    OPTIONS = parser.parse_args()
++    suite = unittest.defaultTestLoader.loadTestsFromTestCase(ComponentAcceptance)
++    result = unittest.TextTestRunner(verbosity=2).run(suite)
++    report = {"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
++              "skipped": len(result.skipped), "success": result.wasSuccessful(),
++              "scope": "isolated Windows x64 package; Chinese/space installation path; no helper GUI integration"}
++    OPTIONS.report.parent.mkdir(parents=True, exist_ok=True)
++    OPTIONS.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
++    raise SystemExit(0 if result.wasSuccessful() else 1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index f0bc3616687abea17f1564f9c63763296bbea9be..2ae9f9c01c932a7b31dd2d2aee3048e8e9c0412a 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -2651,25 +2651,6 @@ dependencies = [
+  "objc2-foundation",
+ ]
+ 
+-[[package]]
+-name = "octop-pet"
+-version = "0.2.0"
+-dependencies = [
+- "keyring",
+- "objc2",
+- "objc2-app-kit",
+- "objc2-quartz-core",
+- "raw-window-handle",
+- "serde",
+- "serde_json",
+- "tauri",
+- "tauri-build",
+- "tauri-plugin-dialog",
+- "tauri-plugin-global-shortcut",
+- "tauri-plugin-http",
+- "tauri-plugin-opener",
+-]
+-
+ [[package]]
+ name = "once_cell"
+ version = "1.21.4"
+@@ -2703,6 +2684,27 @@ dependencies = [
+  "pin-project-lite",
+ ]
+ 
++[[package]]
++name = "paldee-pet"
++version = "0.2.3"
++dependencies = [
++ "keyring",
++ "objc2",
++ "objc2-app-kit",
++ "objc2-quartz-core",
++ "raw-window-handle",
++ "serde",
++ "serde_json",
++ "tauri",
++ "tauri-build",
++ "tauri-plugin-dialog",
++ "tauri-plugin-global-shortcut",
++ "tauri-plugin-http",
++ "tauri-plugin-opener",
++ "tokio",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "pango"
+ version = "0.18.3"
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 717588fac203691fe3497400898e876ee656d68f..34903199c732e45c6d74cb70fe8aa5f5abbc373d 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+-name = "octop-pet"
+-version = "0.2.0"
++name = "paldee-pet"
++version = "0.2.3"
+ description = "Desktop companion for a remote Octop instance"
+ authors = ["you"]
+ edition = "2021"
+@@ -11,7 +11,7 @@ edition = "2021"
+ # The `_lib` suffix may seem redundant but it is necessary
+ # to make the lib name unique and wouldn't conflict with the bin name.
+ # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+-name = "octop_pet_lib"
++name = "paldee_pet_lib"
+ crate-type = ["staticlib", "cdylib", "rlib"]
+ 
+ [build-dependencies]
+@@ -29,6 +29,8 @@ tauri-plugin-http = "2"
+ 
+ [target.'cfg(windows)'.dependencies]
+ raw-window-handle = "0.6"
++tokio = { version = "1.53.1", features = ["rt", "net", "time", "io-util"] }
++windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Console"] }
+ 
+ [target.'cfg(target_os = "macos")'.dependencies]
+ objc2 = "0.6"
+diff --git a/src-tauri/src/component_runtime.rs b/src-tauri/src/component_runtime.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..60e50aa27f39b9aa7c3784840ea5412eb3fb00d0
+--- /dev/null
++++ b/src-tauri/src/component_runtime.rs
+@@ -0,0 +1,663 @@
++//! Windows-only, current-user lifecycle control; independent of chat/CLI transport.
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::{
++    io,
++    os::windows::{io::AsRawHandle, process::CommandExt},
++    path::PathBuf,
++    process::{Command, Stdio},
++    ptr,
++    sync::mpsc,
++    time::{Duration, Instant},
++};
++use tauri::Manager;
++use tokio::{
++    io::{AsyncReadExt, AsyncWriteExt},
++    net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions},
++    runtime::{Builder, Runtime},
++    time::{sleep, timeout},
++};
++use windows_sys::Win32::{
++    Foundation::{
++        CloseHandle, GetHandleInformation, LocalFree, SetHandleInformation, HANDLE,
++        HANDLE_FLAG_INHERIT, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
++    },
++    Security::{
++        Authorization::{
++            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
++        },
++        GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
++    },
++    System::{
++        Console::{
++            AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
++            STD_OUTPUT_HANDLE,
++        },
++        Pipes::GetNamedPipeServerProcessId,
++        RemoteDesktop::ProcessIdToSessionId,
++        Threading::{
++            CreateMutexW, GetCurrentProcess, OpenProcess, OpenProcessToken, ReleaseMutex,
++            WaitForSingleObject, PROCESS_SYNCHRONIZE,
++        },
++    },
++};
++
++pub const PROTOCOL: &str = "octoppet-component@1";
++const VERSION: &str = env!("CARGO_PKG_VERSION");
++const MAX_FRAME: usize = 8192;
++
++#[derive(Debug, Serialize, Deserialize)]
++struct Request {
++    protocol: String,
++    command: String,
++}
++
++fn response(command: &str, running: bool, visible: bool) -> Value {
++    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":true,
++        "command":command,"running":running,"visible":visible,
++        "pid":if running {Some(std::process::id())} else {None},"error":null,
++        "data_dir":data_dir().ok(),
++        "control_pipe":current_sid().ok().and_then(|sid| pipe_name(&sid).ok())})
++}
++
++fn failure(command: &str, code: &str, message: impl ToString) -> Value {
++    json!({"protocol":PROTOCOL,"id":"octoppet","version":VERSION,"ok":false,
++        "command":command,"error":{"code":code,"message":message.to_string()}})
++}
++
++fn command_valid(command: &str) -> bool {
++    matches!(command, "status" | "start" | "stop" | "show" | "hide")
++}
++
++pub fn data_dir() -> Result<PathBuf, String> {
++    let path = std::env::var_os("OCTOPPET_DATA_DIR")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("com.octop.pet")))
++        .ok_or("APPDATA is unavailable")?;
++    if !path.is_absolute() {
++        return Err("user data directory must be absolute".into());
++    }
++    // Resolve existing ancestors before creating anything, including symlink targets.
++    let mut ancestor = path;
++    let mut suffix = Vec::new();
++    while !ancestor.exists() {
++        suffix.push(
++            ancestor
++                .file_name()
++                .ok_or("invalid user data path")?
++                .to_os_string(),
++        );
++        if !ancestor.pop() {
++            return Err("invalid user data path".into());
++        }
++    }
++    let mut path = ancestor.canonicalize().map_err(|e| e.to_string())?;
++    for name in suffix.into_iter().rev() {
++        path.push(name);
++    }
++    let exe_dir = std::env::current_exe()
++        .map_err(|e| e.to_string())?
++        .parent()
++        .ok_or("executable directory is unavailable")?
++        .canonicalize()
++        .map_err(|e| e.to_string())?;
++    let managed_root = exe_dir
++        .parent()
++        .filter(|p| {
++            p.file_name()
++                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("versions"))
++        })
++        .and_then(|p| p.parent())
++        .unwrap_or(&exe_dir);
++    if path.starts_with(managed_root) || managed_root.starts_with(&path) {
++        return Err("user data must be outside the component directory".into());
++    }
++    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
++    Ok(path)
++}
++
++fn current_sid() -> io::Result<String> {
++    unsafe {
++        let mut token: HANDLE = ptr::null_mut();
++        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let mut size = 0;
++        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut size);
++        // TOKEN_USER contains pointers; the allocation must have pointer alignment.
++        let mut buffer = vec![0usize; (size as usize).div_ceil(size_of::<usize>())];
++        let ok = GetTokenInformation(
++            token,
++            TokenUser,
++            buffer.as_mut_ptr().cast(),
++            size,
++            &mut size,
++        );
++        CloseHandle(token);
++        if ok == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
++        let mut text = ptr::null_mut();
++        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let mut len = 0;
++        while *text.add(len) != 0 {
++            len += 1;
++        }
++        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
++        LocalFree(text.cast());
++        Ok(sid)
++    }
++}
++
++fn pipe_name(sid: &str) -> Result<String, String> {
++    // Fixed FNV-1a scope hash; Rust's DefaultHasher is not stable across releases.
++    let mut hash = 0xcbf29ce484222325u64;
++    for byte in data_dir()?.to_string_lossy().to_lowercase().as_bytes() {
++        hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
++    }
++    let mut session = 0;
++    unsafe {
++        if ProcessIdToSessionId(std::process::id(), &mut session) == 0 {
++            return Err(io::Error::last_os_error().to_string());
++        }
++    }
++    let mode = if cfg!(debug_assertions) {
++        "dev"
++    } else {
++        "release"
++    };
++    Ok(format!(
++        r"\\.\pipe\octoppet-{sid}-{session}-{mode}-{:x}",
++        hash
++    ))
++}
++
++fn create_pipe(name: &str, sid: &str, first: bool) -> io::Result<NamedPipeServer> {
++    // Explicit current-user ACL; no Everyone/anonymous or remote access.
++    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})\0").encode_utf16().collect();
++    unsafe {
++        let mut descriptor = ptr::null_mut();
++        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
++            sddl.as_ptr(),
++            1,
++            &mut descriptor,
++            ptr::null_mut(),
++        ) == 0
++        {
++            return Err(io::Error::last_os_error());
++        }
++        let mut attributes = SECURITY_ATTRIBUTES {
++            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
++            lpSecurityDescriptor: descriptor,
++            bInheritHandle: 0,
++        };
++        let pipe = ServerOptions::new()
++            .first_pipe_instance(first)
++            .reject_remote_clients(true)
++            // Clients may briefly retain a disconnected instance after acknowledging.
++            // Use the default limit while keeping only one pending server listener.
++            .create_with_security_attributes_raw(
++                name,
++                (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
++            );
++        LocalFree(descriptor);
++        pipe
++    }
++}
++
++fn runtime() -> Runtime {
++    Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .expect("component runtime")
++}
++
++async fn read_frame<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<Vec<u8>> {
++    let len = stream.read_u32_le().await? as usize;
++    if len == 0 || len > MAX_FRAME {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "invalid frame size",
++        ));
++    }
++    let mut frame = vec![0; len];
++    stream.read_exact(&mut frame).await?;
++    Ok(frame)
++}
++
++async fn write_frame<W: AsyncWriteExt + Unpin>(stream: &mut W, value: &Value) -> io::Result<()> {
++    let frame = serde_json::to_vec(value)?;
++    if frame.len() > MAX_FRAME {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "response too large",
++        ));
++    }
++    stream.write_u32_le(frame.len() as u32).await?;
++    stream.write_all(&frame).await
++}
++
++async fn rpc(name: &str, command: &str) -> io::Result<Value> {
++    let mut client = loop {
++        match ClientOptions::new().open(name) {
++            Ok(client) => break client,
++            Err(e) if e.raw_os_error() == Some(231) => sleep(Duration::from_millis(25)).await,
++            Err(e) => return Err(e),
++        }
++    };
++    write_frame(&mut client, &json!({"protocol":PROTOCOL,"command":command})).await?;
++    let value: Value = serde_json::from_slice(&read_frame(&mut client).await?)?;
++    let mut server_pid = 0;
++    if unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut server_pid) } == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    if value["protocol"] != PROTOCOL || value["id"] != "octoppet" {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "incompatible response",
++        ));
++    }
++    if value["running"] == true && value["pid"].as_u64() != Some(server_pid as u64) {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "process identity mismatch",
++        ));
++    }
++    // Keep the server connected until its entire reply has been consumed.
++    client.write_u8(1).await?;
++    Ok(value)
++}
++
++// Startup can briefly close a connection before the GUI event loop is ready.
++// Retry only idempotent probes; the caller's total deadline still bounds this loop.
++async fn startup_rpc(name: &str, command: &str) -> io::Result<Value> {
++    loop {
++        match rpc(name, command).await {
++            Err(e)
++                if matches!(command, "start" | "status")
++                    && matches!(
++                        e.kind(),
++                        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
++                    ) =>
++            {
++                sleep(Duration::from_millis(25)).await;
++            }
++            result => return result,
++        }
++    }
++}
++
++fn process_running(pid: u32) -> bool {
++    unsafe {
++        let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
++        if process.is_null() {
++            return false;
++        }
++        let running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
++        CloseHandle(process);
++        running
++    }
++}
++
++async fn control(name: &str, command: &str) -> io::Result<Value> {
++    match startup_rpc(name, command).await {
++        Ok(mut value) => {
++            if command == "stop" && value["ok"] == true {
++                if let Some(pid) = value["pid"].as_u64() {
++                    while process_running(pid as u32) {
++                        sleep(Duration::from_millis(25)).await;
++                    }
++                }
++                value["running"] = false.into();
++                value["visible"] = false.into();
++                value["pid"] = Value::Null;
++            }
++            Ok(value)
++        }
++        Err(e) if e.kind() == io::ErrorKind::NotFound => {
++            if matches!(command, "status" | "stop") {
++                return Ok(response(command, false, false));
++            }
++            if command != "start" {
++                return Ok(failure(command, "NOT_RUNNING", "start the component first"));
++            }
++            let mut child = spawn_host()?;
++            loop {
++                match startup_rpc(name, "start").await {
++                    Ok(value) => return Ok(value),
++                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
++                    Err(e) => return Err(e),
++                }
++                if let Some(status) = child.try_wait()? {
++                    // A competing host exits successfully after finding the existing owner.
++                    // Keep probing that owner instead of reporting a failed launch.
++                    if !status.success() {
++                        return Ok(failure(
++                            command,
++                            "START_FAILED",
++                            format!("host exited: {status}"),
++                        ));
++                    }
++                }
++                sleep(Duration::from_millis(50)).await;
++            }
++        }
++        Err(e) => Err(e),
++    }
++}
++
++struct StartLock(HANDLE);
++
++impl StartLock {
++    fn acquire(pipe_name: &str, milliseconds: u32) -> io::Result<Self> {
++        let name: Vec<u16> = format!("Local\\{}-start", pipe_name.replace('\\', "_"))
++            .encode_utf16()
++            .chain(Some(0))
++            .collect();
++        unsafe {
++            let handle = CreateMutexW(ptr::null(), 0, name.as_ptr());
++            if handle.is_null() {
++                return Err(io::Error::last_os_error());
++            }
++            match WaitForSingleObject(handle, milliseconds) {
++                WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
++                result => {
++                    let error = if result == WAIT_TIMEOUT {
++                        io::Error::new(
++                            io::ErrorKind::TimedOut,
++                            "another start is still in progress",
++                        )
++                    } else {
++                        io::Error::last_os_error()
++                    };
++                    CloseHandle(handle);
++                    Err(error)
++                }
++            }
++        }
++    }
++}
++
++impl Drop for StartLock {
++    fn drop(&mut self) {
++        unsafe {
++            ReleaseMutex(self.0);
++            CloseHandle(self.0);
++        }
++    }
++}
++
++fn spawn_host() -> io::Result<std::process::Child> {
++    // Giving the child NUL stdio alone does not exclude other inherited pipe handles.
++    // A lingering capture handle would make the controller wait until the GUI exits.
++    let mut inherited = Vec::new();
++    unsafe {
++        for kind in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
++            let handle = GetStdHandle(kind);
++            let mut flags = 0;
++            if GetHandleInformation(handle, &mut flags) != 0 && flags & HANDLE_FLAG_INHERIT != 0 {
++                if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) == 0 {
++                    return Err(io::Error::last_os_error());
++                }
++                inherited.push((handle, flags));
++            }
++        }
++    }
++    let result = (|| {
++        Command::new(std::env::current_exe()?)
++            .arg("--component-host")
++            .current_dir(data_dir().map_err(io::Error::other)?)
++            .stdin(Stdio::null())
++            .stdout(Stdio::null())
++            .stderr(Stdio::null())
++            .creation_flags(0x08000000)
++            .spawn()
++    })();
++    for (handle, flags) in inherited {
++        unsafe {
++            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags & HANDLE_FLAG_INHERIT);
++        }
++    }
++    result
++}
++
++fn print_result(value: Value) -> ! {
++    let code = if value["ok"] == true {
++        0
++    } else {
++        match value["error"]["code"].as_str() {
++            Some("INVALID_ARGUMENT") => 2,
++            Some("UNSUPPORTED_PROTOCOL") => 3,
++            Some("NOT_RUNNING") => 4,
++            Some("TIMEOUT") => 5,
++            Some("START_FAILED") => 6,
++            Some("WINDOW_ERROR") => 9,
++            _ => 8,
++        }
++    };
++    println!("{value}");
++    std::process::exit(code)
++}
++
++pub struct Host {
++    runtime: Runtime,
++    pipe: NamedPipeServer,
++    name: String,
++    sid: String,
++}
++
++/// Called before Tauri creates any windows; the first pipe instance is the owner lock.
++pub fn entry() -> Host {
++    let args: Vec<String> = std::env::args().skip(1).collect();
++    let sid = current_sid().unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
++    let name = pipe_name(&sid).unwrap_or_else(|e| print_result(failure("", "IO_ERROR", e)));
++    let runtime = runtime();
++    if !args.is_empty() && args != ["--component-host"] {
++        // GUI builds have no console by default; preserve redirected handles from callers.
++        unsafe {
++            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
++            if stdout.is_null() || stdout == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
++                AttachConsole(ATTACH_PARENT_PROCESS);
++            }
++        }
++        let command = args.first().map(String::as_str).unwrap_or("");
++        let mut milliseconds = 15000;
++        let valid = command_valid(command)
++            && args.get(1).map(String::as_str) == Some("--json")
++            && (args.len() == 2
++                || (args.len() == 4
++                    && args[2] == "--timeout-ms"
++                    && args[3].parse::<u64>().is_ok_and(|n| {
++                        milliseconds = n;
++                        (100..=15000).contains(&n)
++                    })));
++        if !valid {
++            print_result(failure(
++                command,
++                "INVALID_ARGUMENT",
++                "expected command --json [--timeout-ms 100..15000]",
++            ));
++        }
++        let deadline = Instant::now() + Duration::from_millis(milliseconds);
++        let start_lock = if command == "start" {
++            Some(
++                StartLock::acquire(&name, milliseconds as u32).unwrap_or_else(|e| {
++                    let code = if e.kind() == io::ErrorKind::TimedOut {
++                        "TIMEOUT"
++                    } else {
++                        "IO_ERROR"
++                    };
++                    print_result(failure(command, code, e))
++                }),
++            )
++        } else {
++            None
++        };
++        let value = runtime.block_on(async {
++            timeout(
++                deadline.saturating_duration_since(Instant::now()),
++                control(&name, command),
++            )
++            .await
++        });
++        drop(start_lock);
++        print_result(match value {
++            Ok(Ok(value)) => value,
++            Ok(Err(e)) => failure(command, "IO_ERROR", e),
++            Err(_) => failure(
++                command,
++                "TIMEOUT",
++                "operation exceeded its deadline; inspect status before retry",
++            ),
++        });
++    }
++    let pipe = {
++        let _guard = runtime.enter();
++        match create_pipe(&name, &sid, true) {
++            Ok(pipe) => pipe,
++            Err(_) => {
++                // A direct repeat launch is a no-op, never opens a second UI or steals focus.
++                let result = runtime.block_on(async {
++                    timeout(Duration::from_secs(15), startup_rpc(&name, "status")).await
++                });
++                if matches!(result, Ok(Ok(ref value)) if value["ok"] == true) {
++                    std::process::exit(0);
++                }
++                print_result(failure(
++                    "start",
++                    "IO_ERROR",
++                    "unable to own the component pipe",
++                ));
++            }
++        }
++    };
++    Host {
++        runtime,
++        pipe,
++        name,
++        sid,
++    }
++}
++
++fn dispatch(app: &tauri::AppHandle, request: Request) -> Value {
++    if request.protocol != PROTOCOL {
++        return failure(
++            &request.command,
++            "UNSUPPORTED_PROTOCOL",
++            "expected octoppet-component@1",
++        );
++    }
++    if !command_valid(&request.command) {
++        return failure(
++            &request.command,
++            "INVALID_ARGUMENT",
++            "unknown lifecycle command",
++        );
++    }
++    let Some(pet) = app.get_webview_window("pet") else {
++        return failure(
++            &request.command,
++            "WINDOW_ERROR",
++            "pet window is unavailable",
++        );
++    };
++    let operation = match request.command.as_str() {
++        "show" => pet.show(),
++        "hide" => {
++            for label in ["chat", "settings"] {
++                if let Some(window) = app.get_webview_window(label) {
++                    let _ = window.hide();
++                }
++            }
++            pet.hide()
++        }
++        _ => Ok(()),
++    };
++    match operation {
++        Ok(()) => response(&request.command, true, pet.is_visible().unwrap_or(false)),
++        Err(e) => failure(&request.command, "WINDOW_ERROR", e),
++    }
++}
++
++impl Host {
++    pub fn serve(self, app: tauri::AppHandle) {
++        std::thread::spawn(move || {
++            self.runtime.block_on(async move {
++                let mut pipe = self.pipe;
++                loop {
++                    let connected = pipe.connect().await;
++                    // Keep a fresh listener alive before releasing the previous instance.
++                    // Reusing a disconnected overlapped pipe can retain stale read readiness.
++                    let next = match create_pipe(&self.name, &self.sid, false) {
++                        Ok(next) => next,
++                        Err(_) => {
++                            app.exit(8);
++                            break;
++                        }
++                    };
++                    if connected.is_err() {
++                        let _ = pipe.disconnect();
++                        pipe = next;
++                        continue;
++                    }
++                    let result = timeout(Duration::from_secs(3), async {
++                        let request: Request =
++                            serde_json::from_slice(&read_frame(&mut pipe).await?)?;
++                        let (send, receive) = mpsc::sync_channel(1);
++                        let handle = app.clone();
++                        app.run_on_main_thread(move || {
++                            let _ = send.send(dispatch(&handle, request));
++                        })
++                        .map_err(io::Error::other)?;
++                        let value = receive
++                            .recv_timeout(Duration::from_secs(2))
++                            .map_err(io::Error::other)?;
++                        write_frame(&mut pipe, &value).await?;
++                        let _ = pipe.read_u8().await?;
++                        Ok::<bool, io::Error>(value["ok"] == true && value["command"] == "stop")
++                    })
++                    .await;
++                    let _ = pipe.disconnect();
++                    pipe = next;
++                    if matches!(result, Ok(Ok(true))) {
++                        app.exit(0);
++                        break;
++                    }
++                }
++            })
++        });
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn only_lifecycle_commands_are_accepted() {
++        for command in ["status", "start", "stop", "show", "hide"] {
++            assert!(command_valid(command));
++        }
++        for command in ["exec", "shell", "window activate", ""] {
++            assert!(!command_valid(command));
++        }
++    }
++
++    #[test]
++    fn stopped_status_has_no_process_id() {
++        let value = response("status", false, false);
++        assert_eq!(value["protocol"], PROTOCOL);
++        assert_eq!(value["id"], "octoppet");
++        assert!(value["pid"].is_null());
++    }
++
++    #[test]
++    fn failure_is_structured() {
++        let value = failure("show", "NOT_RUNNING", "start first");
++        assert_eq!(value["ok"], false);
++        assert_eq!(value["error"]["code"], "NOT_RUNNING");
++    }
++}
+diff --git a/src-tauri/src/config_cmd.rs b/src-tauri/src/config_cmd.rs
+index 4d4bbe80ae813493a5285ce4f4f0eec850433e44..ff65d4aac39db29c11d01a1a4c3eba5bcdb0eb86 100644
+--- a/src-tauri/src/config_cmd.rs
++++ b/src-tauri/src/config_cmd.rs
+@@ -3,7 +3,9 @@ use std::{collections::HashMap, fs, path::Path, sync::Mutex};
+ use serde::de::DeserializeOwned;
+ use serde::{Deserialize, Serialize};
+ use serde_json::Value;
+-use tauri::{AppHandle, Manager};
++use tauri::AppHandle;
++#[cfg(not(windows))]
++use tauri::Manager;
+ 
+ const CONFIG_FILE_NAME: &str = "config.json";
+ static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+@@ -127,6 +129,12 @@ pub fn patch_at_path(path: &Path, patch: Value) -> Result<AppConfig, String> {
+ }
+ 
+ fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
++    #[cfg(windows)]
++    {
++        let _ = app;
++        Ok(crate::component_runtime::data_dir()?.join(CONFIG_FILE_NAME))
++    }
++    #[cfg(not(windows))]
+     app.path()
+         .app_config_dir()
+         .map(|path| path.join(CONFIG_FILE_NAME))
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index a52c03d4ca8a77aa5da0b446c169238b46f51fce..1bdf9897567c78f90038f9913420f7fa6c242012 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,3 +1,5 @@
++#[cfg(windows)]
++pub mod component_runtime;
+ pub mod config_cmd;
+ pub mod pd_bridge_cmd;
+ pub mod secrets_cmd;
+@@ -6,6 +8,14 @@ pub mod window_cmd;
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
++    #[cfg(windows)]
++    let host = component_runtime::entry();
++    #[allow(unused_mut)]
++    let mut context = tauri::generate_context!();
++    #[cfg(windows)]
++    for window in &mut context.config_mut().app.windows {
++        window.create = false;
++    }
+     tauri::Builder::default()
+         .plugin(tauri_plugin_opener::init())
+         .plugin(tauri_plugin_dialog::init())
+@@ -28,7 +38,16 @@ pub fn run() {
+             }
+             _ => {}
+         })
+-        .setup(|app| {
++        .setup(move |app| {
++            #[cfg(windows)]
++            {
++                let data_dir = component_runtime::data_dir()?;
++                for config in &app.config().app.windows {
++                    tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
++                        .data_directory(data_dir.join("webview"))
++                        .build()?;
++                }
++            }
+             #[cfg(target_os = "macos")]
+             {
+                 // Desktop-pet style: stay out of Dock/Stage Manager focus fights
+@@ -40,6 +59,8 @@ pub fn run() {
+             window_cmd::ensure_dialog_windows_transparent(app.handle());
+             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
+             window_cmd::spawn_pet_transparency_watchdog(app.handle());
++            #[cfg(windows)]
++            host.serve(app.handle().clone());
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
+@@ -61,6 +82,6 @@ pub fn run() {
+             window_cmd::apply_window_deactivate_policy,
+             tray::reload_hotkeys,
+         ])
+-        .run(tauri::generate_context!())
++        .run(context)
+         .expect("error while running tauri application");
+ }
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index 880b2d6c8a841904833cc374e5a0b3355b4e693a..b8e9a2d2f7b74b79c766bf9de4b0bbcb97cecc75 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -2,5 +2,5 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
+ fn main() {
+-    octop_pet_lib::run()
++    paldee_pet_lib::run()
+ }
+diff --git a/src-tauri/src/pd_bridge_cmd.rs b/src-tauri/src/pd_bridge_cmd.rs
+index 1c6bad441c12d0583c4985c44dff97959062faac..7ec8d8c401167947bda075dc5528d0db07faa305 100644
+--- a/src-tauri/src/pd_bridge_cmd.rs
++++ b/src-tauri/src/pd_bridge_cmd.rs
+@@ -1,7 +1,7 @@
+-//! Thin adapter to the independently installed, read-only PD component.
++//! Thin adapter to the independently installed helper CLI transport.
+ use serde_json::Value;
+ use std::{
+-    io::Read,
++    io::{Read, Write},
+     path::PathBuf,
+     process::{Command, Stdio},
+     time::{Duration, Instant},
+@@ -16,6 +16,25 @@ fn component_entry() -> Result<PathBuf, String> {
+         }
+         return Err("开发组件路径无效".into());
+     }
++    if let Ok(exe) = std::env::current_exe() {
++        if let Some(directory) = exe.parent() {
++            let metadata_path = directory.join("component.json");
++            if metadata_path.is_file() {
++                let metadata: Value = serde_json::from_slice(
++                    &std::fs::read(metadata_path).map_err(|_| "宠物组件记录不可读")?,
++                )
++                .map_err(|_| "宠物组件记录无效")?;
++                if metadata["id"] != "octoppet" || metadata["protocol"] != "octoppet-component@1" {
++                    return Err("宠物组件协议不兼容".into());
++                }
++                let path = directory.join("pd-device-bridge.exe");
++                return path
++                    .is_file()
++                    .then_some(path)
++                    .ok_or("宠物包中的 CLI 桥接缺失".into());
++            }
++        }
++    }
+     let root = std::env::var_os("SCREEN_AUTOMATION_HOME")
+         .map(PathBuf::from)
+         .or_else(|| {
+@@ -49,18 +68,37 @@ fn component_entry() -> Result<PathBuf, String> {
+ pub async fn pd_execute_cli(
+     window: tauri::WebviewWindow,
+     args: Vec<String>,
++    input: Option<Value>,
+ ) -> Result<Value, String> {
+     if window.label() != "chat" {
+-        return Err("本机查询仅允许从聊天窗口调用".into());
++        return Err("本机 CLI 仅允许从聊天窗口调用".into());
+     }
+     tauri::async_runtime::spawn_blocking(move || {
+         if !valid_cli_args(&args) {
+-            return Err("此请求不属于已启用的小助手 CLI 范围".into());
++            return Err("CLI 参数格式无效".into());
+         }
+         let mut command = Command::new(component_entry()?);
+-        command.args(&args);
++        let payload = if let Some(input) = input {
++            if !input.is_object() {
++                return Err("CLI 输入格式无效".into());
++            }
++            let bytes = serde_json::to_vec(&serde_json::json!({"args":args,"input":input}))
++                .map_err(|_| "CLI 输入序列化失败")?;
++            if bytes.len() > 8 * 1024 * 1024 {
++                return Err("CLI 输入超过 8 MiB".into());
++            }
++            command.arg("--request-json");
++            Some(bytes)
++        } else {
++            command.args(&args);
++            None
++        };
+         command
+-            .stdin(Stdio::null())
++            .stdin(if payload.is_some() {
++                Stdio::piped()
++            } else {
++                Stdio::null()
++            })
+             .stdout(Stdio::piped())
+             .stderr(Stdio::null());
+         #[cfg(windows)]
+@@ -69,11 +107,15 @@ pub async fn pd_execute_cli(
+             command.creation_flags(0x08000000);
+         }
+         let mut child = command.spawn().map_err(|_| "本机桥接组件启动失败")?;
++        let writer = payload.map(|bytes| {
++            let mut stdin = child.stdin.take().expect("piped CLI input");
++            std::thread::spawn(move || stdin.write_all(&bytes))
++        });
+         let stdout = child.stdout.take().ok_or("本机输出不可用")?;
+         let reader = std::thread::spawn(move || {
+             let mut bytes = Vec::new();
+             stdout
+-                .take(8 * 1024 * 1024 + 1)
++                .take(16 * 1024 * 1024 + 1)
+                 .read_to_end(&mut bytes)
+                 .map(|_| bytes)
+         });
+@@ -87,22 +129,25 @@ pub async fn pd_execute_cli(
+                 _ => {
+                     let _ = child.kill();
+                     let _ = child.wait();
+-                    return Err("本机查询超时".into());
++                    return Err("本机 CLI 调用超时".into());
+                 }
+             }
+         }
++        if let Some(writer) = writer {
++            let _ = writer.join();
++        }
+         let output = reader
+             .join()
+             .map_err(|_| "本机输出读取失败")?
+             .map_err(|_| "本机输出读取失败")?;
+-        if output.len() > 8 * 1024 * 1024 {
+-            return Err("本机查询结果过大".into());
++        if output.len() > 16 * 1024 * 1024 {
++            return Err("本机 CLI 结果过大".into());
+         }
+         let result: Value = serde_json::from_slice(&output).map_err(|_| "本机桥接结果格式无效")?;
+         Ok(result)
+     })
+     .await
+-    .map_err(|_| "本机查询线程异常".to_string())?
++    .map_err(|_| "本机 CLI 线程异常".to_string())?
+ }
+ 
+ fn valid_version(version: &str) -> bool {
+@@ -126,33 +171,31 @@ mod tests {
+ }
+ 
+ fn valid_cli_args(args: &[String]) -> bool {
+-    if args.len() < 2
++    if args.is_empty()
+         || args.len() > 128
+         || !matches!(args[0].as_str(), "cli" | "browser")
+         || args.iter().any(|a| a.len() > 4096 || a.contains('\0'))
+     {
+         return false;
+     }
+-    if args[0] == "browser" {
+-        return true;
+-    }
+-    match args[1].as_str() {
+-        "status" | "describe" | "capabilities" | "health" => args.len() == 2,
+-        "access" => args.len() == 3 && args[2] == "list",
+-        "window" | "screen" | "mouse" | "keyboard" | "ocr" | "browser" => args.len() >= 3,
+-        _ => false,
+-    }
++    true
+ }
+ 
+ #[cfg(test)]
+ mod cli_tests {
+     use super::valid_cli_args;
+     #[test]
+-    fn only_enabled_helper_cli_arguments_are_allowed() {
++    fn all_helper_subcommands_are_allowed() {
++        assert!(valid_cli_args(
++            &["cli", "workflow", "schema"].map(String::from)
++        ));
++        assert!(valid_cli_args(
++            &["cli", "future-command", "--help"].map(String::from)
++        ));
+         for args in [
+             vec!["bash", "-c", "run"],
+-            vec!["cli", "workflow", "run"],
+-            vec!["cli", "access", "activate"],
++            vec!["powershell", "-Command", "run"],
++            vec!["cmd", "/c", "run"],
+         ] {
+             assert!(!valid_cli_args(
+                 &args.into_iter().map(String::from).collect::<Vec<_>>()
+diff --git a/src-tauri/src/secrets_cmd.rs b/src-tauri/src/secrets_cmd.rs
+index 48e7cfe9ea44a20b98e537d8c1c1bf1c921fb6fc..19eaef0ffb2c6b18076dafbf18e403f900f70490 100644
+--- a/src-tauri/src/secrets_cmd.rs
++++ b/src-tauri/src/secrets_cmd.rs
+@@ -1,11 +1,10 @@
+-use std::{
+-    collections::HashMap,
+-    fs,
+-    path::{Path, PathBuf},
+-    sync::Mutex,
+-};
++use std::{collections::HashMap, fs, path::Path, sync::Mutex};
+ 
+-use tauri::{AppHandle, Manager};
++#[cfg(debug_assertions)]
++use std::path::PathBuf;
++use tauri::AppHandle;
++#[cfg(all(debug_assertions, not(windows)))]
++use tauri::Manager;
+ 
+ use crate::config_cmd;
+ 
+@@ -14,6 +13,7 @@ use keyring::{Entry, Error};
+ 
+ #[cfg(not(debug_assertions))]
+ const KEYRING_SERVICE: &str = "com.octop.pet";
++#[cfg(debug_assertions)]
+ const DEV_SECRETS_FILE: &str = "dev-secrets.json";
+ static SECRETS_WRITE_LOCK: Mutex<()> = Mutex::new(());
+ 
+@@ -87,6 +87,12 @@ pub fn delete_secret_from_file(path: &Path, account: &str) -> Result<(), String>
+ 
+ #[cfg(debug_assertions)]
+ fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
++    #[cfg(windows)]
++    {
++        let _ = app;
++        Ok(crate::component_runtime::data_dir()?.join(DEV_SECRETS_FILE))
++    }
++    #[cfg(not(windows))]
+     app.path()
+         .app_config_dir()
+         .map(|dir| dir.join(DEV_SECRETS_FILE))
+@@ -114,6 +120,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
+         return Ok(None);
+     }
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+@@ -132,6 +140,8 @@ pub fn get_secret(app: AppHandle, key: String) -> Result<Option<String>, String>
+ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> {
+     let username = config_cmd::load_config(app.clone())?.username;
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+@@ -148,6 +158,8 @@ pub fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), Stri
+ pub fn delete_secret(app: AppHandle, key: String) -> Result<(), String> {
+     let username = config_cmd::load_config(app.clone())?.username;
+     let account = secret_account(&username, &key)?;
++    #[cfg(not(debug_assertions))]
++    let _ = &account;
+ 
+     #[cfg(debug_assertions)]
+     {
+diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
+index 922b044fe56b0dbadd7cf9d9418327026941c449..bc2d6f43869091dd9030213ab70ad355ca52756b 100644
+--- a/src-tauri/src/tray.rs
++++ b/src-tauri/src/tray.rs
+@@ -175,6 +175,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
+     let tray = TrayIconBuilder::new()
+         .icon(icon)
+         .icon_as_template(true)
++        .tooltip(app.config().product_name.as_deref().unwrap_or_default())
+         .menu(&menu)
+         .on_menu_event(|app, event| {
+             if let Err(error) = handle_menu_event(app, event.id().as_ref()) {
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 745b91113b62954d99da0b4352f77c15b92adb8c..21cda10d68e188bec5a297ae13c31de318e86531 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+-  "productName": "OctopPet",
+-  "version": "0.2.0",
++  "productName": "Paldee Pet",
++  "version": "0.2.3",
+   "identifier": "com.octop.pet",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+@@ -28,7 +28,7 @@
+       },
+       {
+         "label": "chat",
+-        "title": "Octop Chat",
++        "title": "Paldee Pet",
+         "width": 400,
+         "height": 400,
+         "minWidth": 280,
+diff --git a/src-tauri/tests/command_logic.rs b/src-tauri/tests/command_logic.rs
+index 717d9a81710e88fec98a06d5b1e1044aa436ec88..4479bf023ad061a9f4ed7efb67737cf8d30f8ff5 100644
+--- a/src-tauri/tests/command_logic.rs
++++ b/src-tauri/tests/command_logic.rs
+@@ -4,7 +4,7 @@ use std::{
+     time::{SystemTime, UNIX_EPOCH},
+ };
+ 
+-use octop_pet_lib::{
++use paldee_pet_lib::{
+     config_cmd::{load_from_path, patch_at_path, save_to_path, select_mascot, AppConfig},
+     secrets_cmd::{
+         delete_secret_from_file, get_secret_from_file, secret_account, set_secret_in_file,
+@@ -76,7 +76,7 @@ fn config_file_defaults_when_missing_and_round_trips() {
+         .duration_since(UNIX_EPOCH)
+         .unwrap()
+         .as_nanos();
+-    let dir = std::env::temp_dir().join(format!("octop-pet-config-{unique}"));
++    let dir = std::env::temp_dir().join(format!("paldee-pet-config-{unique}"));
+     let path = dir.join("config.json");
+ 
+     assert_eq!(load_from_path(&path).unwrap(), AppConfig::default());
+@@ -98,7 +98,7 @@ fn config_patch_updates_only_owned_fields() {
+         .duration_since(UNIX_EPOCH)
+         .unwrap()
+         .as_nanos();
+-    let dir = std::env::temp_dir().join(format!("octop-pet-patch-{unique}"));
++    let dir = std::env::temp_dir().join(format!("paldee-pet-patch-{unique}"));
+     let path = dir.join("config.json");
+     let original = AppConfig {
+         base_url: "https://old.example".into(),
+@@ -142,7 +142,7 @@ fn keep_windows_visible_defaults_when_missing_from_file() {
+         .duration_since(UNIX_EPOCH)
+         .unwrap()
+         .as_nanos();
+-    let dir = std::env::temp_dir().join(format!("octop-pet-keep-visible-{unique}"));
++    let dir = std::env::temp_dir().join(format!("paldee-pet-keep-visible-{unique}"));
+     fs::create_dir_all(&dir).unwrap();
+     let path = dir.join("config.json");
+     fs::write(&path, r#"{"baseUrl":"https://x.example"}"#).unwrap();
+@@ -168,7 +168,7 @@ fn debug_secrets_file_round_trips_without_keyring() {
+         .duration_since(UNIX_EPOCH)
+         .unwrap()
+         .as_nanos();
+-    let dir = std::env::temp_dir().join(format!("octop-pet-secrets-{unique}"));
++    let dir = std::env::temp_dir().join(format!("paldee-pet-secrets-{unique}"));
+     let path = dir.join("dev-secrets.json");
+ 
+     assert_eq!(get_secret_from_file(&path, "alice:password").unwrap(), None);
+diff --git a/src/lib/brand.ts b/src/lib/brand.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cd42edea8df91eabc1ec2e05b430fce249c76cd
+--- /dev/null
++++ b/src/lib/brand.ts
+@@ -0,0 +1,3 @@
++import { productName } from "../../src-tauri/tauri.conf.json";
++
++export const APP_NAME = productName;
+diff --git a/src/lib/pdChatBridge.test.ts b/src/lib/pdChatBridge.test.ts
+index face955fdb43978dd5ce78ab6b862a5aae27bc72..0cb66c80a0f98e8c09841013829425c2bdb12c82 100644
+--- a/src/lib/pdChatBridge.test.ts
++++ b/src/lib/pdChatBridge.test.ts
+@@ -35,6 +35,52 @@ beforeEach(() => {
+   });
+ });
+ describe("PD bridge on the existing chat socket", () => {
++  it.each([
++    "workflow",
++    "memory",
++    "runs",
++    "components",
++    "file",
++    "agent",
++    "future-command",
++  ])("forwards complete helper CLI family %s", async (family) => {
++    const { socket, handle } = setup();
++    const args = ["cli", family, "--help"];
++    handle({ ...request, args });
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
++  });
++  it("passes stdin and files on the same socket and deduplicates the operation", async () => {
++    const { socket, handle } = setup();
++    const input = {
++      stdin: "中文 JSON",
++      uploads: [],
++      downloads: ["C:/test/source.py"],
++    };
++    const frame = { ...request, method: "helper.cli.io", input };
++    handle(frame);
++    handle(frame);
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(1);
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(request.args, input);
++  });
++  it("executes more than eight completed commands on a persistent chat", async () => {
++    const { socket, handle } = setup();
++    for (let index = 0; index < 20; index++) {
++      handle({ ...request, id: index.toString(16).padStart(32, "0") });
++      await vi.waitFor(() =>
++        expect(socket.send).toHaveBeenCalledTimes(index + 1),
++      );
++    }
++    expect(tauriApi.pdExecuteCli).toHaveBeenCalledTimes(20);
++  });
++  it("rejects malformed IO envelopes before invoking the helper", async () => {
++    const { socket, handle } = setup();
++    handle({ ...request, method: "helper.cli.io", input: { stdin: 123 } });
++    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
++    expect(tauriApi.pdExecuteCli).not.toHaveBeenCalled();
++  });
++
+   it("read-only probes run without confirmation", async () => {
+     const { handle } = setup();
+     for (const [index, args] of [
+@@ -113,11 +159,11 @@ describe("PD bridge on the existing chat socket", () => {
+       expect(tauriApi.pdExecuteCli).toHaveBeenCalledWith(args);
+     },
+   );
+-  it("rejects operating-system commands and disabled CLI families", () => {
++  it("rejects invalid framing and operating-system entry points", () => {
+     for (const args of [
+       ["bash", "-c", "echo test"],
+-      ["cli", "workflow", "run"],
+-      ["cli", "access", "activate"],
++      ["powershell", "-Command", "run"],
++      ["cmd", "/c", "run"],
+       ["cli", "screen", "bad\0"],
+     ])
+       expect(isPdCliArgs(args)).toBe(false);
+diff --git a/src/lib/pdChatBridge.ts b/src/lib/pdChatBridge.ts
+index 7551449a6343aeb7d65ce4907d509984b4e4ec5d..bfd71a68535e648c58f2cf5a9cb6c2bc6d166cc0 100644
+--- a/src/lib/pdChatBridge.ts
++++ b/src/lib/pdChatBridge.ts
+@@ -13,6 +13,7 @@ export function createPdChatBridge(
+   reportError: (message: string) => void = () => {},
+ ) {
+   const requests = new Map<string, Promise<unknown>>();
++  const activeRequests = new Set<string>();
+   return (chunk: unknown): boolean => {
+     if (!chunk || typeof chunk !== "object") return false;
+     const frame = chunk as Record<string, unknown>;
+@@ -27,28 +28,49 @@ export function createPdChatBridge(
+     const id = frame.id;
+     let result = requests.get(id);
+     if (!result) {
+-      if (requests.size >= 8) return true;
+-      result = (async () => {
+-        if (
+-          !supportsPdChatBridge(socket.url) ||
+-          frame.method !== "helper.cli" ||
+-          !isPdCliArgs(frame.args)
+-        )
+-          return { ok: false, error: "此连接或操作不支持本机桥接" };
+-        try {
+-          if (socket.readyState !== WebSocket.OPEN)
+-            return { ok: false, error: "聊天连接已结束" };
+-          return await tauriApi.pdExecuteCli(frame.args as string[]);
+-        } catch (error) {
+-          const reason =
+-            error instanceof Error
+-              ? error.message
+-              : typeof error === "string"
+-                ? error
+-                : "小助手调用失败，请检查本机安装和运行状态";
+-          return { ok: false, error: reason };
+-        }
+-      })();
++      if (activeRequests.size >= 8) {
++        result = Promise.resolve({
++          ok: false,
++          error: "本机 CLI 请求队列繁忙，请稍后重试",
++        });
++      } else {
++        activeRequests.add(id);
++        result = (async () => {
++          if (
++            !supportsPdChatBridge(socket.url) ||
++            !["helper.cli", "helper.cli.io"].includes(String(frame.method)) ||
++            !isPdCliArgs(frame.args)
++          )
++            return { ok: false, error: "此连接或操作不支持本机桥接" };
++          try {
++            if (socket.readyState !== WebSocket.OPEN)
++              return { ok: false, error: "聊天连接已结束" };
++            if (frame.method === "helper.cli.io") {
++              if (!isPdCliInput(frame.input))
++                return { ok: false, error: "CLI 标准输入或文件传输参数无效" };
++              return await tauriApi.pdExecuteCli(
++                frame.args as string[],
++                frame.input,
++              );
++            }
++            return await tauriApi.pdExecuteCli(frame.args as string[]);
++          } catch (error) {
++            const reason =
++              error instanceof Error
++                ? error.message
++                : typeof error === "string"
++                  ? error
++                  : "小助手调用失败，请检查本机安装和运行状态";
++            return { ok: false, error: reason };
++          }
++        })().finally(() => {
++          activeRequests.delete(id);
++          for (const key of requests.keys()) {
++            if (requests.size <= 128) break;
++            if (!activeRequests.has(key)) requests.delete(key);
++          }
++        });
++      }
+       requests.set(id, result);
+     }
+     void result.then((output) => {
+@@ -72,7 +94,7 @@ export function createPdChatBridge(
+ export function isPdCliArgs(value: unknown): value is string[] {
+   if (
+     !Array.isArray(value) ||
+-    value.length < 2 ||
++    value.length < 1 ||
+     value.length > 128 ||
+     !["cli", "browser"].includes(value[0]) ||
+     value.some(
+@@ -81,15 +103,31 @@ export function isPdCliArgs(value: unknown): value is string[] {
+     )
+   )
+     return false;
+-  if (value[0] === "browser") return true;
+-  const direct = ["status", "describe", "capabilities", "health"];
+-  if (direct.includes(value[1])) return value.length === 2;
+-  if (value[1] === "access") return value.length === 3 && value[2] === "list";
+-  return (
+-    ["window", "screen", "mouse", "keyboard", "ocr", "browser"].includes(
+-      value[1],
+-    ) && value.length >= 3
+-  );
++  return true;
++}
++
++export function isPdCliInput(value: unknown): boolean {
++  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
++  const input = value as Record<string, unknown>;
++  if (
++    Object.keys(input).some(
++      (key) => !["stdin", "uploads", "downloads"].includes(key),
++    )
++  )
++    return false;
++  if (
++    input.stdin !== undefined &&
++    (typeof input.stdin !== "string" || input.stdin.length > 1024 * 1024)
++  )
++    return false;
++  for (const key of ["uploads", "downloads"]) {
++    if (
++      input[key] !== undefined &&
++      (!Array.isArray(input[key]) || input[key].length > 128)
++    )
++      return false;
++  }
++  return JSON.stringify(input).length <= 8 * 1024 * 1024;
+ }
+ 
+ export function pdCliErrorMessage(output: unknown): string {
+diff --git a/src/lib/tauriApi.ts b/src/lib/tauriApi.ts
+index 82201316d246ac9a45593d3ab29c66e928482cc2..bd73baa7ef86c3dc116f303870fd3225aeec9e43 100644
+--- a/src/lib/tauriApi.ts
++++ b/src/lib/tauriApi.ts
+@@ -4,7 +4,11 @@ import { emit, listen } from "@tauri-apps/api/event";
+ import type { AppConfig, MascotId } from "./types";
+ 
+ export const tauriApi = {
+-  pdExecuteCli: (args: string[]) => invoke<unknown>("pd_execute_cli", { args }),
++  pdExecuteCli: (args: string[], input?: unknown) =>
++    invoke<unknown>(
++      "pd_execute_cli",
++      input === undefined ? { args } : { args, input },
++    ),
+   loadConfig: () => invoke<AppConfig>("load_config"),
+   saveConfig: (cfg: AppConfig) => invoke<void>("save_config", { cfg }),
+   patchConfig: (patch: Partial<AppConfig>) =>
+diff --git a/src/main.tsx b/src/main.tsx
+index 452d9d3549cb400231ecc1b0139eda1c3041f691..6e40ff4718b8289a19c471e173d3466512f752bc 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,11 +2,13 @@ import React from "react";
+ import ReactDOM from "react-dom/client";
+ 
+ import "./App.css";
++import { APP_NAME } from "./lib/brand";
+ import { getWindowLabel } from "./lib/tauriWindowApi";
+ import ChatWindow from "./windows/ChatWindow";
+ import PetWindow from "./windows/PetWindow";
+ import SettingsWindow from "./windows/SettingsWindow";
+ 
++document.title = APP_NAME;
+ const label = getWindowLabel();
+ document.documentElement.dataset.windowLabel = label;
+ 
+diff --git a/src/windows/SettingsWindow.tsx b/src/windows/SettingsWindow.tsx
+index c5475c732d530e56ad822cad339ca17fa699557b..610964e43cc18fe00ececd9f047f9a15022b08d9 100644
+--- a/src/windows/SettingsWindow.tsx
++++ b/src/windows/SettingsWindow.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useRef, useState } from "react";
+ 
++import { APP_NAME } from "../lib/brand";
+ import ShortcutRecorder from "../components/ShortcutRecorder";
+ import WindowCloseButton from "../components/WindowCloseButton";
+ import {
+@@ -476,7 +477,7 @@ export default function SettingsWindow() {
+             <div className="settings-rows settings-about">
+               <div className="settings-row">
+                 <span>应用</span>
+-                <span>OctopPet</span>
++                <span>{APP_NAME}</span>
+               </div>
+               <div className="settings-row">
+                 <span>版本</span>

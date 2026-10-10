@@ -2652,27 +2652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "octop-pet"
-version = "0.2.3"
-dependencies = [
- "keyring",
- "objc2",
- "objc2-app-kit",
- "objc2-quartz-core",
- "raw-window-handle",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-http",
- "tauri-plugin-opener",
- "tokio",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2703,6 +2682,27 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "paldee-pet"
+version = "0.2.3"
+dependencies = [
+ "keyring",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-quartz-core",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-http",
+ "tauri-plugin-opener",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
