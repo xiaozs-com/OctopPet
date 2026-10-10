@@ -8,6 +8,12 @@ use std::{
 };
 
 fn component_entry() -> Result<PathBuf, String> {
+    // The PD CLI bridge is packaged as `pd-device-bridge.exe` on Windows and a
+    // bare `pd-device-bridge` Mach-O on macOS (see package_pd_component*.py).
+    #[cfg(windows)]
+    const BRIDGE_NAME: &str = "pd-device-bridge.exe";
+    #[cfg(not(windows))]
+    const BRIDGE_NAME: &str = "pd-device-bridge";
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("PD_BRIDGE_COMPONENT_EXE") {
         let path = PathBuf::from(path);
@@ -27,7 +33,7 @@ fn component_entry() -> Result<PathBuf, String> {
                 if metadata["id"] != "octoppet" || metadata["protocol"] != "octoppet-component@1" {
                     return Err("宠物组件协议不兼容".into());
                 }
-                let path = directory.join("pd-device-bridge.exe");
+                let path = directory.join(BRIDGE_NAME);
                 return path
                     .is_file()
                     .then_some(path)
@@ -54,10 +60,7 @@ fn component_entry() -> Result<PathBuf, String> {
     if !valid_version(version) {
         return Err("PD 组件版本无效".into());
     }
-    let path = root
-        .join("versions")
-        .join(version)
-        .join("pd-device-bridge.exe");
+    let path = root.join("versions").join(version).join(BRIDGE_NAME);
     if !path.is_file() {
         return Err("PD 桥接组件入口缺失".into());
     }
