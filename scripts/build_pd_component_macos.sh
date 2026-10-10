@@ -21,7 +21,7 @@ cargo build --release --locked --target x86_64-apple-darwin --manifest-path "$br
 
 arguments=(
   scripts/package_pd_component_macos.py
-  --pet src-tauri/target/release/octop-pet
+  --pet src-tauri/target/release/paldee-pet
   --bridge "$bridge_root/native/target/x86_64-apple-darwin/release/pd-device-bridge"
   --bridge-root "$bridge_root"
 )
